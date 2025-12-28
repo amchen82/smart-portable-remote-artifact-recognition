@@ -3,3 +3,5 @@ fastapi
 uvicorn
 opencv-python
 starlette
+pytesseract
+Pillow

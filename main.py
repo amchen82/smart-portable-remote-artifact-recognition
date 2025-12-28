@@ -1,6 +1,7 @@
 import os
 import threading
 import time
+import base64
 from dataclasses import dataclass
 from typing import Optional, Union
 from urllib.error import URLError, HTTPError
@@ -9,7 +10,23 @@ from urllib.request import Request, urlopen
 import cv2
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from starlette.responses import Response, StreamingResponse
+
+try:
+    import pytesseract
+except Exception:
+    pytesseract = None
+
+try:
+    from PIL import Image
+except Exception:
+    Image = None
+
+try:
+    import numpy as np
+except Exception:
+    np = None
 
 
 def _parse_source(value: str) -> Union[int, str]:
@@ -232,6 +249,45 @@ def _ensure_camera_running(state: CameraState) -> None:
         _start_camera(state)
 
 
+class OcrRequest(BaseModel):
+    data_url: Optional[str] = None
+    threshold: Optional[int] = None
+    invert: bool = False
+    lang: str = "eng"
+    psm: int = 6
+
+
+def _decode_data_url(data_url: str) -> bytes:
+    if "," not in data_url:
+        raise ValueError("Invalid data_url (missing comma)")
+    header, b64 = data_url.split(",", 1)
+    if not header.startswith("data:"):
+        raise ValueError("Invalid data_url header")
+    return base64.b64decode(b64)
+
+
+def _jpeg_bytes_to_cv2_image(image_bytes: bytes):
+    if np is None:
+        raise RuntimeError("numpy is required (should be installed with opencv-python)")
+    arr = np.frombuffer(image_bytes, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("Could not decode image bytes")
+    return img
+
+
+def _preprocess_for_ocr(img_bgr, threshold: Optional[int], invert: bool):
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    if threshold is not None:
+        thr_val = int(max(0, min(255, threshold)))
+        _, bw = cv2.threshold(gray, thr_val, 255, cv2.THRESH_BINARY)
+    else:
+        bw = gray
+    if invert:
+        bw = cv2.bitwise_not(bw)
+    return bw
+
+
 APP_HOST = os.getenv("HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("PORT", "8000"))
 
@@ -355,6 +411,69 @@ def video() -> StreamingResponse:
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={"Cache-Control": "no-store"},
     )
+
+
+@app.post("/ocr")
+def ocr(req: OcrRequest) -> dict:
+    if pytesseract is None or Image is None:
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                "OCR not installed. Install Python deps: pip install pytesseract Pillow. "
+                "Also install the Tesseract OCR engine and ensure it's on PATH."
+            ),
+        )
+
+    # Optional: allow overriding the tesseract binary path on Windows.
+    tesseract_cmd = os.getenv("TESSERACT_CMD")
+    if tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+
+    if req.data_url:
+        try:
+            image_bytes = _decode_data_url(req.data_url)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid data_url: {exc}")
+        img_bgr = _jpeg_bytes_to_cv2_image(image_bytes)
+    else:
+        # Fall back to most recent frame.
+        _ensure_camera_running(state)
+        with state._lock:
+            jpeg = state.last_jpeg
+            err = state.last_error
+        if jpeg is None:
+            raise HTTPException(status_code=503, detail=err or "No frame available yet")
+        img_bgr = _jpeg_bytes_to_cv2_image(jpeg)
+
+    pre = _preprocess_for_ocr(img_bgr, req.threshold, req.invert)
+    pil_img = Image.fromarray(pre)
+
+    config = f"--oem 3 --psm {int(req.psm)}"
+    text = pytesseract.image_to_string(pil_img, lang=req.lang, config=config)
+
+    # Basic confidence summary (optional).
+    confidence_avg = None
+    try:
+        data = pytesseract.image_to_data(pil_img, lang=req.lang, config=config, output_type=pytesseract.Output.DICT)
+        confs = []
+        for c in data.get("conf", []):
+            try:
+                v = float(c)
+                if v >= 0:
+                    confs.append(v)
+            except Exception:
+                pass
+        if confs:
+            confidence_avg = sum(confs) / len(confs)
+    except Exception:
+        pass
+
+    return {
+        "text": text.strip(),
+        "confidence_avg": confidence_avg,
+        "lang": req.lang,
+        "psm": req.psm,
+    }
 
 
 if __name__ == "__main__":

@@ -16,6 +16,11 @@ const App: React.FC = () => {
   const [backendUrl, setBackendUrl] = useState(DEFAULT_CONFIG.BASE_URL);
   const [showSettings, setShowSettings] = useState(false);
 
+  const [ocrBusy, setOcrBusy] = useState(false);
+  const [ocrText, setOcrText] = useState<string>('');
+  const [ocrError, setOcrError] = useState<string | null>(null);
+  const [ocrProgress, setOcrProgress] = useState<number | null>(null);
+
   const videoUrl = `${backendUrl}${DEFAULT_CONFIG.VIDEO_PATH}`;
   const snapshotBaseUrl = `${backendUrl}${DEFAULT_CONFIG.SNAPSHOT_PATH}`;
 
@@ -71,6 +76,44 @@ const App: React.FC = () => {
   };
 
   const selectedSnapshot = snapshots.find(s => s.id === selectedSnapshotId);
+
+  useEffect(() => {
+    // Clear OCR output when switching snapshots.
+    setOcrText('');
+    setOcrError(null);
+    setOcrProgress(null);
+  }, [selectedSnapshotId]);
+
+  const runOcr = async () => {
+    if (!selectedSnapshot) return;
+    setOcrBusy(true);
+    setOcrError(null);
+    setOcrProgress(null);
+    try {
+      // Only OCR the captured/processed picture (data URL), not the live stream.
+      const dataUrl = selectedSnapshot.processedUrl;
+      if (!dataUrl || !dataUrl.startsWith('data:image/')) {
+        throw new Error('No processed image available yet. Move the threshold slider once, then try again.');
+      }
+
+      const mod = await import('tesseract.js');
+      const result = await mod.recognize(dataUrl, 'eng', {
+        logger: (m: any) => {
+          if (m && typeof m.progress === 'number') {
+            setOcrProgress(Math.round(m.progress * 100));
+          }
+        }
+      });
+
+      const text = result?.data?.text ?? '';
+      setOcrText(text.trim() || '(no text found)');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setOcrError(msg);
+    } finally {
+      setOcrBusy(false);
+    }
+  };
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-950 text-slate-100">
@@ -277,6 +320,41 @@ const App: React.FC = () => {
                             {v === 0 ? 'Min' : v === 255 ? 'Max' : v}
                           </button>
                         ))}
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">OCR</h4>
+                          <button
+                            onClick={runOcr}
+                            disabled={ocrBusy}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 text-white text-[11px] font-bold"
+                          >
+                            {ocrBusy ? 'Reading…' : 'Run OCR'}
+                          </button>
+                        </div>
+
+                        {ocrBusy && (
+                          <div className="text-[11px] text-slate-300">
+                            {ocrProgress != null ? `Progress: ${ocrProgress}%` : 'Loading OCR engine…'}
+                          </div>
+                        )}
+
+                        {ocrError && (
+                          <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg p-2">
+                            {ocrError}
+                          </div>
+                        )}
+
+                        <div className="bg-slate-950 border border-slate-800 rounded-xl p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em]">Result</span>
+                            <span className="text-[10px] text-slate-400 font-mono"></span>
+                          </div>
+                          <pre className="whitespace-pre-wrap text-[12px] text-slate-200 leading-relaxed font-mono">
+                            {ocrText || '—'}
+                          </pre>
+                        </div>
                       </div>
                     </div>
                   </>
