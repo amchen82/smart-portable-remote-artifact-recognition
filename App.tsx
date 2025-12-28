@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Camera, RefreshCcw, Sliders, Image as ImageIcon, Trash2, Download, Maximize2, Settings, Server, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Camera, RefreshCcw, Sliders, Image as ImageIcon, Trash2, Download, Maximize2, Settings, Server, CheckCircle2, AlertCircle, Info } from 'lucide-react';
 import { DEFAULT_CONFIG } from './constants';
 import { Snapshot, AppStatus } from './types';
 import { applyThreshold } from './services/imageProcessor';
@@ -13,7 +13,6 @@ const App: React.FC = () => {
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
   const [streamConnected, setStreamConnected] = useState(true);
   
-  // Settings State
   const [backendUrl, setBackendUrl] = useState(DEFAULT_CONFIG.BASE_URL);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -39,6 +38,7 @@ const App: React.FC = () => {
         threshold: currentThreshold
       };
 
+      // We use the canvas to process the snapshot URL
       const processed = await applyThreshold(snapshotUrl, currentThreshold);
       newSnapshot.processedUrl = processed;
 
@@ -46,7 +46,7 @@ const App: React.FC = () => {
       setSelectedSnapshotId(newSnapshot.id);
       setStatus(AppStatus.IDLE);
     } catch (err) {
-      setError(`Backend unreachable at ${backendUrl}. Check if main.py is running.`);
+      setError(`Failed to capture: Check if backend is running at ${backendUrl}. If using Chrome, you may need to allow 'Insecure content' in Site Settings.`);
       setStatus(AppStatus.ERROR);
     }
   };
@@ -74,7 +74,6 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-950 text-slate-100">
-      {/* Sidebar - Gallery */}
       <aside className="w-80 border-r border-slate-800 bg-slate-900/50 flex flex-col shrink-0">
         <div className="p-4 border-b border-slate-800 flex justify-between items-center">
           <h2 className="text-lg font-bold flex items-center gap-2">
@@ -112,7 +111,6 @@ const App: React.FC = () => {
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0">
         <header className="h-16 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md flex items-center justify-between px-6 z-20">
           <div className="flex items-center gap-4">
@@ -149,7 +147,6 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        {/* Settings Overlay */}
         {showSettings && (
           <div className="absolute top-16 right-6 w-80 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl z-30 p-4 animate-in fade-in slide-in-from-top-2">
             <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Backend Connection</h3>
@@ -161,16 +158,25 @@ const App: React.FC = () => {
                     type="text" 
                     value={backendUrl}
                     onChange={(e) => setBackendUrl(e.target.value)}
-                    placeholder="http://localhost:8000"
+                    placeholder="http://172.20.10.2:8000"
                     className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition-colors"
                   />
                   <button onClick={refreshStream} className="p-2 bg-slate-800 rounded-lg hover:bg-slate-700"><CheckCircle2 className="w-4 h-4 text-green-400" /></button>
                 </div>
               </div>
-              <div className="p-3 bg-blue-500/5 border border-blue-500/10 rounded-lg">
-                <p className="text-[10px] text-blue-400 leading-relaxed">
-                  Tip: Use <strong>http://localhost:8000</strong> if running main.py locally, or the IP of your external hardware device.
-                </p>
+              <div className="p-3 bg-blue-500/5 border border-blue-500/10 rounded-lg space-y-2">
+                <div className="flex gap-2 text-blue-400">
+                    <Info className="w-3 h-3 shrink-0 mt-0.5" />
+                    <p className="text-[10px] leading-relaxed">
+                      Browsers block HTTPS to local HTTP. If connection fails:
+                    </p>
+                </div>
+                <ul className="text-[9px] text-slate-400 list-disc pl-4 space-y-1">
+                    <li>Click the 🔒 or 🛡️ icon in the address bar.</li>
+                    <li>Go to <strong>Site Settings</strong>.</li>
+                    <li>Set <strong>Insecure content</strong> to <strong>Allow</strong>.</li>
+                    <li>Ensure <strong>main.py</strong> is running on the host.</li>
+                </ul>
               </div>
             </div>
           </div>
@@ -178,14 +184,13 @@ const App: React.FC = () => {
 
         <div className="flex-1 overflow-auto p-6 space-y-6">
           {error && (
-            <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl flex items-center gap-3 text-red-400 animate-pulse">
-              <AlertCircle className="w-5 h-5 shrink-0" />
+            <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl flex items-start gap-3 text-red-400">
+              <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
               <p className="text-sm font-medium">{error}</p>
             </div>
           )}
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 h-[calc(100%-2rem)] min-h-[500px]">
-            {/* Stream Section */}
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between px-1">
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Source Input</span>
@@ -199,8 +204,9 @@ const App: React.FC = () => {
                     src={videoUrl} 
                     alt="Live" 
                     className="w-full h-full object-contain"
+                    crossOrigin="anonymous"
                     onError={() => {
-                       setError("Failed to connect to stream. Is the Python server running?");
+                       setError(`Connection to ${videoUrl} failed. Ensure the Python server is running and your browser allows insecure content for this site.`);
                        setStreamConnected(false);
                     }}
                   />
@@ -216,7 +222,6 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Processor Section */}
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between px-1">
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Processing Layer</span>
