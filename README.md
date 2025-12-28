@@ -10,11 +10,35 @@ View your app in AI Studio: https://ai.studio/apps/drive/13n9mzZToNnddD6xWyF4VAe
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
+**Prerequisites:** Node.js, Python 3.10+
+
+### 1) Start the Python backend (camera proxy)
+
+This UI expects a backend that serves:
+
+- `GET /video` (MJPEG stream)
+- `GET /snapshots` (single JPEG)
+
+By default the backend pulls frames from `http://172.20.10.2/video`. Override with `CAMERA_SOURCE`.
+
+1. Install Python deps:
+    `pip install -r requirements.txt`
+2. Start the server (default: `http://localhost:8000`):
+    `python main.py`
+
+Optional:
+
+- Use a different camera source:
+   `set CAMERA_SOURCE=http://YOUR_CAMERA_IP/video`
+- Use your local webcam instead:
+   `set CAMERA_SOURCE=0`
+
+### 2) Start the web UI
 
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Run the app:
    `npm run dev`
+
+The UI defaults to the Python backend at `http://localhost:8000` (see [constants.ts](constants.ts)).

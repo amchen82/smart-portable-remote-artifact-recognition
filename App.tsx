@@ -116,7 +116,7 @@ const App: React.FC = () => {
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <Server className={`w-4 h-4 ${streamConnected ? 'text-green-400' : 'text-red-400'}`} />
-              <h1 className="font-bold text-lg tracking-tight">Vision<span className="text-blue-500">Node</span></h1>
+              <h1 className="font-bold text-lg tracking-tight">ArtifactRecovery<span className="text-blue-500">Genie</span></h1>
             </div>
             <div className="text-[10px] bg-slate-800 px-2 py-1 rounded font-mono text-slate-400 border border-slate-700">
               {backendUrl}
@@ -158,7 +158,7 @@ const App: React.FC = () => {
                     type="text" 
                     value={backendUrl}
                     onChange={(e) => setBackendUrl(e.target.value)}
-                    placeholder="http://172.20.10.2:8000"
+                    placeholder="http://192.168.86.38:8000"
                     className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition-colors"
                   />
                   <button onClick={refreshStream} className="p-2 bg-slate-800 rounded-lg hover:bg-slate-700"><CheckCircle2 className="w-4 h-4 text-green-400" /></button>
