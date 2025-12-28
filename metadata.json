@@ -1,0 +1,7 @@
+{
+  "name": "Vision Capture & Thresholding Studio",
+  "description": "A high-performance web application for monitoring live video streams, capturing snapshots, and applying real-time image thresholding filters.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
