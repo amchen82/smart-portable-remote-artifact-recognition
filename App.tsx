@@ -116,23 +116,26 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-950 text-slate-100">
-      <aside className="w-80 border-r border-slate-800 bg-slate-900/50 flex flex-col shrink-0">
-        <div className="p-4 border-b border-slate-800 flex justify-between items-center">
+    <div className="flex h-screen overflow-hidden bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 text-slate-900">
+      <aside className="w-80 border-r border-slate-200 bg-white/90 backdrop-blur flex flex-col shrink-0">
+        <div className="p-4 border-b border-purple-200 bg-gradient-to-r from-purple-100 to-pink-100 flex justify-between items-center">
           <h2 className="text-lg font-bold flex items-center gap-2">
-            <ImageIcon className="w-5 h-5 text-blue-400" />
+            <ImageIcon className="w-5 h-5 text-purple-600" />
             Gallery
           </h2>
-          <span className="text-xs bg-slate-800 px-2 py-1 rounded-full text-slate-400">
+          <span className="text-xs bg-purple-200 px-2 py-1 rounded-full text-purple-800 border border-purple-300 font-semibold">
             {snapshots.length}
           </span>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {snapshots.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-slate-500 text-center p-8 space-y-4 opacity-50">
-              <Camera className="w-12 h-12" />
-              <p className="text-sm">No snapshots captured.</p>
+            <div className="h-full flex flex-col items-center justify-center text-slate-600 text-center p-8 space-y-3">
+              <div className="w-16 h-16 rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-center">
+                <Camera className="w-8 h-8 text-sky-600" />
+              </div>
+              <p className="text-sm font-semibold">No snapshots yet</p>
+              <p className="text-xs text-slate-500">Press Capture to grab a frame.</p>
             </div>
           ) : (
             snapshots.map(snap => (
@@ -140,13 +143,13 @@ const App: React.FC = () => {
                 key={snap.id}
                 onClick={() => setSelectedSnapshotId(snap.id)}
                 className={`group relative rounded-xl border-2 transition-all cursor-pointer overflow-hidden ${
-                  selectedSnapshotId === snap.id ? 'border-blue-500 ring-4 ring-blue-500/10' : 'border-transparent hover:border-slate-700'
+                  selectedSnapshotId === snap.id ? 'border-fuchsia-400 ring-4 ring-fuchsia-200/60 shadow-lg shadow-fuchsia-300/30' : 'border-transparent hover:border-purple-300 hover:shadow-md'
                 }`}
               >
-                <img src={snap.processedUrl || snap.url} alt="" className="w-full h-32 object-cover bg-black" />
-                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent flex justify-between items-end">
-                  <span className="text-[10px] text-white/70 font-mono">{snap.timestamp.toLocaleTimeString()}</span>
-                  <button onClick={(e) => { e.stopPropagation(); deleteSnapshot(snap.id); }} className="p-1.5 bg-red-500/80 hover:bg-red-500 rounded text-white"><Trash2 className="w-3.5 h-3.5" /></button>
+                <img src={snap.processedUrl || snap.url} alt="" className="w-full h-32 object-cover bg-white" />
+                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-white/90 to-transparent flex justify-between items-end">
+                  <span className="text-[10px] text-slate-700 font-mono">{snap.timestamp.toLocaleTimeString()}</span>
+                  <button onClick={(e) => { e.stopPropagation(); deleteSnapshot(snap.id); }} className="p-1.5 bg-rose-500 hover:bg-rose-600 rounded text-white"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
               </div>
             ))
@@ -155,13 +158,13 @@ const App: React.FC = () => {
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md flex items-center justify-between px-6 z-20">
+        <header className="h-16 border-b border-purple-200 bg-gradient-to-r from-white via-purple-50 to-pink-50/80 backdrop-blur flex items-center justify-between px-6 z-20">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <Server className={`w-4 h-4 ${streamConnected ? 'text-green-400' : 'text-red-400'}`} />
-              <h1 className="font-bold text-lg tracking-tight">ArtifactRecovery<span className="text-blue-500">Genie</span></h1>
+              <Server className={`w-4 h-4 ${streamConnected ? 'text-cyan-600' : 'text-rose-600'}`} />
+              <h1 className="font-bold text-lg tracking-tight bg-gradient-to-r from-purple-600 via-pink-600 to-fuchsia-600 bg-clip-text text-transparent">ArtifactRecovery<span>Genie</span></h1>
             </div>
-            <div className="text-[10px] bg-slate-800 px-2 py-1 rounded font-mono text-slate-400 border border-slate-700">
+            <div className="text-[10px] bg-slate-50 px-2 py-1 rounded font-mono text-slate-600 border border-slate-200">
               {backendUrl}
             </div>
           </div>
@@ -169,20 +172,20 @@ const App: React.FC = () => {
           <div className="flex items-center gap-3">
              <button 
               onClick={() => setShowSettings(!showSettings)}
-              className={`p-2 rounded-lg transition-colors ${showSettings ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 text-slate-400'}`}
+              className={`p-2 rounded-lg transition-colors ${showSettings ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white' : 'hover:bg-purple-100 text-purple-700'}`}
             >
               <Settings className="w-5 h-5" />
             </button>
             <button 
               onClick={refreshStream}
-              className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"
+              className="p-2 hover:bg-cyan-100 rounded-lg text-cyan-700"
             >
               <RefreshCcw className={`w-5 h-5 ${!streamConnected ? 'animate-spin' : ''}`} />
             </button>
             <button 
               onClick={captureSnapshot}
               disabled={status === AppStatus.CAPTURING}
-              className="flex items-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 rounded-full font-bold transition-all shadow-lg shadow-blue-600/20 active:scale-95"
+              className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-fuchsia-500 to-pink-500 hover:from-fuchsia-400 hover:to-pink-400 disabled:bg-slate-200 rounded-full font-bold transition-all shadow-md hover:shadow-lg active:scale-95 text-white"
             >
               <Camera className="w-4 h-4" />
               {status === AppStatus.CAPTURING ? 'Processing...' : 'Capture'}
@@ -191,30 +194,30 @@ const App: React.FC = () => {
         </header>
 
         {showSettings && (
-          <div className="absolute top-16 right-6 w-80 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl z-30 p-4 animate-in fade-in slide-in-from-top-2">
-            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Backend Connection</h3>
+          <div className="absolute top-16 right-6 w-80 bg-white/95 border border-purple-200 rounded-2xl shadow-xl z-30 p-4 backdrop-blur">
+            <h3 className="text-sm font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent uppercase tracking-widest mb-4">Backend Connection</h3>
             <div className="space-y-4">
               <div>
-                <label className="text-xs text-slate-500 block mb-1.5">Server URL</label>
+                <label className="text-xs text-purple-700 block mb-1.5 font-semibold">Server URL</label>
                 <div className="flex gap-2">
                   <input 
                     type="text" 
                     value={backendUrl}
                     onChange={(e) => setBackendUrl(e.target.value)}
                     placeholder="http://192.168.86.38:8000"
-                    className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition-colors"
+                    className="flex-1 bg-white border border-purple-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 transition-colors"
                   />
-                  <button onClick={refreshStream} className="p-2 bg-slate-800 rounded-lg hover:bg-slate-700"><CheckCircle2 className="w-4 h-4 text-green-400" /></button>
+                  <button onClick={refreshStream} className="p-2 bg-purple-100 rounded-lg hover:bg-purple-200"><CheckCircle2 className="w-4 h-4 text-cyan-600" /></button>
                 </div>
               </div>
-              <div className="p-3 bg-blue-500/5 border border-blue-500/10 rounded-lg space-y-2">
-                <div className="flex gap-2 text-blue-400">
+              <div className="p-3 bg-gradient-to-r from-fuchsia-50 to-pink-50 border border-fuchsia-200 rounded-lg space-y-2">
+                <div className="flex gap-2 text-fuchsia-700">
                     <Info className="w-3 h-3 shrink-0 mt-0.5" />
                     <p className="text-[10px] leading-relaxed">
                       Browsers block HTTPS to local HTTP. If connection fails:
                     </p>
                 </div>
-                <ul className="text-[9px] text-slate-400 list-disc pl-4 space-y-1">
+                <ul className="text-[9px] text-slate-600 list-disc pl-4 space-y-1">
                     <li>Click the 🔒 or 🛡️ icon in the address bar.</li>
                     <li>Go to <strong>Site Settings</strong>.</li>
                     <li>Set <strong>Insecure content</strong> to <strong>Allow</strong>.</li>
@@ -227,26 +230,26 @@ const App: React.FC = () => {
 
         <div className="flex-1 overflow-auto p-6 space-y-6">
           {error && (
-            <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl flex items-start gap-3 text-red-400">
+            <div className="bg-rose-100 border border-rose-400 p-4 rounded-xl flex items-start gap-3 text-rose-900 shadow-md">
               <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-              <p className="text-sm font-medium">{error}</p>
+              <p className="text-sm font-semibold">{error}</p>
             </div>
           )}
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 h-[calc(100%-2rem)] min-h-[500px]">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 h-[calc(100%-2rem)]">
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between px-1">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Source Input</span>
-                <span className="flex items-center gap-1.5 text-[10px] font-bold text-green-400 bg-green-400/10 px-2 py-0.5 rounded border border-green-400/20">
+                <span className="text-[10px] font-bold text-purple-700 uppercase tracking-[0.2em]">Source Input</span>
+                <span className="flex items-center gap-1.5 text-[10px] font-bold text-white bg-gradient-to-r from-cyan-500 to-blue-500 px-2 py-0.5 rounded border border-cyan-300 shadow-sm">
                   LIVE
                 </span>
               </div>
-              <div className="flex-1 bg-black rounded-3xl border border-slate-800 overflow-hidden shadow-2xl relative">
+              <div className="h-48 bg-white rounded-2xl border border-cyan-200 overflow-hidden shadow-lg hover:shadow-xl transition-shadow relative">
                 {streamConnected ? (
                   <img 
                     src={videoUrl} 
                     alt="Live" 
-                    className="w-full h-full object-contain"
+                    className="w-full h-full object-contain bg-gradient-to-br from-blue-50 to-cyan-50"
                     crossOrigin="anonymous"
                     onError={() => {
                        setError(`Connection to ${videoUrl} failed. Ensure the Python server is running and your browser allows insecure content for this site.`);
@@ -254,12 +257,12 @@ const App: React.FC = () => {
                     }}
                   />
                 ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 gap-4">
-                    <RefreshCcw className="w-8 h-8 text-slate-700 animate-spin" />
-                    <p className="text-slate-500 text-xs font-mono">Connecting to backend...</p>
+                  <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-cyan-50 gap-4">
+                    <RefreshCcw className="w-8 h-8 text-cyan-500 animate-spin" />
+                    <p className="text-cyan-700 text-xs font-mono font-semibold">Connecting…</p>
                   </div>
                 )}
-                <div className="absolute top-4 left-4 p-2 bg-black/40 backdrop-blur-md rounded-lg text-[10px] font-mono border border-white/5 uppercase tracking-widest">
+                <div className="absolute top-4 left-4 p-2 bg-white/90 backdrop-blur rounded-lg text-[10px] font-mono border border-cyan-300 uppercase tracking-widest text-cyan-700 font-bold shadow-sm">
                   Cam_01
                 </div>
               </div>
@@ -267,13 +270,13 @@ const App: React.FC = () => {
 
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between px-1">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Processing Layer</span>
-                {selectedSnapshot && <span className="text-[10px] font-mono text-blue-400">THR: {selectedSnapshot.threshold}</span>}
+                <span className="text-[10px] font-bold text-purple-700 uppercase tracking-[0.2em]">Processing Layer</span>
+                {selectedSnapshot && <span className="text-[10px] font-mono text-fuchsia-700 font-bold">THR: {selectedSnapshot.threshold}</span>}
               </div>
-              <div className="flex-1 bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden shadow-2xl flex flex-col">
+              <div className="flex-1 bg-white rounded-2xl border border-purple-200 overflow-hidden shadow-lg flex flex-col">
                 {selectedSnapshot ? (
                   <>
-                    <div className="flex-1 relative bg-black overflow-hidden flex items-center justify-center">
+                    <div className="flex-1 relative bg-gradient-to-br from-purple-50 to-pink-50 overflow-hidden flex items-center justify-center">
                        <img 
                         src={selectedSnapshot.processedUrl || selectedSnapshot.url} 
                         alt="" 
@@ -283,20 +286,20 @@ const App: React.FC = () => {
                         <a 
                           href={selectedSnapshot.processedUrl} 
                           download={`capture_${Date.now()}.png`}
-                          className="p-2 bg-black/50 backdrop-blur-md rounded-lg hover:bg-black/70 text-white"
+                          className="p-2 bg-white/90 backdrop-blur rounded-lg hover:bg-white text-fuchsia-700 border border-purple-300 hover:shadow-md transition-all font-bold"
                         >
                           <Download className="w-4 h-4" />
                         </a>
                       </div>
                     </div>
                     
-                    <div className="p-6 bg-slate-900 border-t border-slate-800 space-y-6">
+                    <div className="p-6 bg-white border-t border-purple-200 space-y-6">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <Sliders className="w-4 h-4 text-blue-400" />
-                          <h3 className="font-bold text-sm">Binary Threshold</h3>
+                          <Sliders className="w-4 h-4 text-fuchsia-600" />
+                          <h3 className="font-bold text-sm text-slate-800">Binary Threshold</h3>
                         </div>
-                        <div className="text-xl font-mono text-blue-400 font-black tracking-tighter">
+                        <div className="text-xl font-mono text-fuchsia-700 font-black tracking-tighter">
                           {selectedSnapshot.threshold}
                         </div>
                       </div>
@@ -307,7 +310,7 @@ const App: React.FC = () => {
                         max="255" 
                         value={selectedSnapshot.threshold}
                         onChange={(e) => updateThreshold(selectedSnapshot.id, parseInt(e.target.value))}
-                        className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                        className="w-full h-2 bg-gradient-to-r from-purple-300 to-pink-300 rounded-lg appearance-none cursor-pointer accent-fuchsia-600 shadow-sm"
                       />
 
                       <div className="grid grid-cols-4 gap-2">
@@ -315,43 +318,43 @@ const App: React.FC = () => {
                           <button 
                             key={v}
                             onClick={() => updateThreshold(selectedSnapshot.id, v)}
-                            className="text-[10px] py-1.5 bg-slate-800 hover:bg-slate-700 rounded border border-slate-700 text-slate-400 font-bold"
+                            className="text-[10px] py-1.5 bg-gradient-to-b from-purple-100 to-pink-100 hover:from-purple-200 hover:to-pink-200 rounded border border-purple-300 text-purple-800 font-bold transition-all"
                           >
                             {v === 0 ? 'Min' : v === 255 ? 'Max' : v}
                           </button>
                         ))}
                       </div>
 
-                      <div className="pt-2 border-t border-slate-800 space-y-3">
+                      <div className="pt-2 border-t border-purple-200 space-y-3">
                         <div className="flex items-center justify-between">
-                          <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">OCR</h4>
+                          <h4 className="text-[10px] font-bold text-purple-700 uppercase tracking-[0.2em]">OCR</h4>
                           <button
                             onClick={runOcr}
                             disabled={ocrBusy}
-                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 text-white text-[11px] font-bold"
+                            className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:bg-slate-300 text-white text-[11px] font-bold shadow-md hover:shadow-lg transition-all"
                           >
                             {ocrBusy ? 'Reading…' : 'Run OCR'}
                           </button>
                         </div>
 
                         {ocrBusy && (
-                          <div className="text-[11px] text-slate-300">
+                          <div className="text-[11px] text-purple-700 font-semibold">
                             {ocrProgress != null ? `Progress: ${ocrProgress}%` : 'Loading OCR engine…'}
                           </div>
                         )}
 
                         {ocrError && (
-                          <div className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg p-2">
+                          <div className="text-[11px] text-rose-900 bg-rose-100 border border-rose-400 rounded-lg p-2 font-semibold">
                             {ocrError}
                           </div>
                         )}
 
-                        <div className="bg-slate-950 border border-slate-800 rounded-xl p-3">
+                        <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-xl p-3">
                           <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em]">Result</span>
-                            <span className="text-[10px] text-slate-400 font-mono"></span>
+                            <span className="text-[10px] text-purple-700 font-bold uppercase tracking-[0.2em]">Result</span>
+                            <span className="text-[10px] text-slate-500 font-mono"></span>
                           </div>
-                          <pre className="whitespace-pre-wrap text-[12px] text-slate-200 leading-relaxed font-mono">
+                          <pre className="whitespace-pre-wrap text-[12px] text-slate-800 leading-relaxed font-mono">
                             {ocrText || '—'}
                           </pre>
                         </div>
@@ -360,10 +363,10 @@ const App: React.FC = () => {
                   </>
                 ) : (
                   <div className="flex-1 flex flex-col items-center justify-center text-slate-600 gap-4">
-                    <div className="w-16 h-16 rounded-full border-2 border-dashed border-slate-800 flex items-center justify-center">
-                      <ImageIcon className="w-6 h-6 opacity-20" />
+                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-100 to-pink-100 border border-purple-300 flex items-center justify-center shadow-sm">
+                      <ImageIcon className="w-7 h-7 text-fuchsia-600" />
                     </div>
-                    <p className="text-xs uppercase font-bold tracking-[0.2em]">Select Input Frame</p>
+                    <p className="text-xs uppercase font-bold tracking-[0.2em] text-purple-700">Select Input Frame</p>
                   </div>
                 )}
               </div>
@@ -371,11 +374,6 @@ const App: React.FC = () => {
           </div>
         </div>
       </main>
-      
-      <style>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
-      `}</style>
     </div>
   );
 };

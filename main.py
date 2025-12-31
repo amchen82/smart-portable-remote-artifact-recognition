@@ -291,7 +291,7 @@ def _preprocess_for_ocr(img_bgr, threshold: Optional[int], invert: bool):
 APP_HOST = os.getenv("HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("PORT", "8000"))
 
-CAMERA_SOURCE = _parse_source(os.getenv("CAMERA_SOURCE", "http://192.168.86.38/video"))
+CAMERA_SOURCE = _parse_source(os.getenv("CAMERA_SOURCE", "http://192.168.86.31/video"))
 CAMERA_FPS = float(os.getenv("CAMERA_FPS", "12"))
 JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "80"))
 IDLE_STOP_SEC = float(os.getenv("IDLE_STOP_SEC", "5"))
