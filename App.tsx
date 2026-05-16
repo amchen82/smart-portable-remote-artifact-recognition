@@ -1,17 +1,24 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Camera, RefreshCcw, Sliders, Image as ImageIcon, Trash2, Download, Settings, Server, AlertCircle, Info, Crop, X, ChevronDown } from 'lucide-react';
+import { Camera, RefreshCcw, Sliders, RotateCcw, RotateCw, Settings, Server, CheckCircle2, AlertCircle, Info, Crop, X, ChevronDown, FlipHorizontal, Download, Trash2, History } from 'lucide-react';
 import { DEFAULT_CONFIG } from './constants';
-import { Snapshot, AppStatus } from './types';
+import { AppStatus } from './types';
 import { applyThreshold } from './services/imageProcessor';
 
+interface CapturedImage {
+  id: string;
+  dataUrl: string;
+  timestamp: number;
+  thumbnail: string;
+}
+
 const App: React.FC = () => {
-  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
-  const [currentThreshold, setCurrentThreshold] = useState(DEFAULT_CONFIG.DEFAULT_THRESHOLD);
   const [status, setStatus] = useState<AppStatus>(AppStatus.IDLE);
   const [error, setError] = useState<string | null>(null);
-  const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
   const [streamConnected, setStreamConnected] = useState(true);
+  const [isFrozen, setIsFrozen] = useState(false);
+  const [frozenImageUrl, setFrozenImageUrl] = useState<string | null>(null);
+
+  const [backendUrl, setBackendUrl] = useState('http://localhost:8000');
   const [showSettings, setShowSettings] = useState(false);
   const [cameraRefreshToken, setCameraRefreshToken] = useState(0);
 
@@ -20,19 +27,89 @@ const App: React.FC = () => {
   const [ocrError, setOcrError] = useState<string | null>(null);
   const [ocrProgress, setOcrProgress] = useState<number | null>(null);
   const [ocrModel, setOcrModel] = useState<'trocr' | 'trocr-multi' | 'tesseract'>('tesseract');
+  const [mirrorFlip, setMirrorFlip] = useState(false);
+  const [processedLiveImage, setProcessedLiveImage] = useState<string | null>(null);
+  const [frozenThreshold, setFrozenThreshold] = useState(DEFAULT_CONFIG.DEFAULT_THRESHOLD);
 
   const [cropping, setCropping] = useState(false);
   const [cropStart, setCropStart] = useState<{ x: number; y: number } | null>(null);
   const [cropEnd, setCropEnd] = useState<{ x: number; y: number } | null>(null);
   const cropImgRef = useRef<HTMLImageElement | null>(null);
 
+  const [capturedHistory, setCapturedHistory] = useState<CapturedImage[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
   const liveVideoRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
 
   const refreshStream = () => {
     setError(null);
+    setIsFrozen(false);
+    setFrozenImageUrl(null);
+    setProcessedLiveImage(null);
+    setOcrText('');
+    setOcrError(null);
     setStreamConnected(false);
     setCameraRefreshToken((value) => value + 1);
+  };
+
+  // Load captured images history from localStorage
+  useEffect(() => {
+    const loadHistory = () => {
+      try {
+        const saved = localStorage.getItem('capturedImagesHistory');
+        if (saved) {
+          setCapturedHistory(JSON.parse(saved));
+        }
+      } catch (err) {
+        console.error('Failed to load image history:', err);
+      }
+    };
+    loadHistory();
+  }, []);
+
+  // Save history to localStorage
+  const saveHistoryToStorage = (history: CapturedImage[]) => {
+    try {
+      localStorage.setItem('capturedImagesHistory', JSON.stringify(history));
+    } catch (err) {
+      console.error('Failed to save image history:', err);
+    }
+  };
+
+  // Add image to history
+  const addToHistory = (dataUrl: string) => {
+    try {
+      const newImage: CapturedImage = {
+        id: `capture_${Date.now()}`,
+        dataUrl,
+        timestamp: Date.now(),
+        thumbnail: dataUrl,
+      };
+      const updated = [newImage, ...capturedHistory].slice(0, 20); // Keep last 20
+      setCapturedHistory(updated);
+      saveHistoryToStorage(updated);
+    } catch (err) {
+      console.error('Failed to add image to history:', err);
+    }
+  };
+
+  // Remove image from history
+  const removeFromHistory = (id: string) => {
+    const updated = capturedHistory.filter((img) => img.id !== id);
+    setCapturedHistory(updated);
+    saveHistoryToStorage(updated);
+  };
+
+  // Load image from history
+  const loadFromHistory = (capturedImage: CapturedImage) => {
+    setFrozenImageUrl(capturedImage.dataUrl);
+    setIsFrozen(true);
+    setFrozenThreshold(DEFAULT_CONFIG.DEFAULT_THRESHOLD);
+    setProcessedLiveImage(null);
+    setOcrText('');
+    setOcrError(null);
+    setShowHistory(false);
   };
 
   useEffect(() => {
@@ -114,7 +191,7 @@ const App: React.FC = () => {
     };
   }, [cameraRefreshToken]);
 
-  const captureSnapshot = async () => {
+  const freezeStream = async () => {
     setStatus(AppStatus.CAPTURING);
     setError(null);
     try {
@@ -134,58 +211,49 @@ const App: React.FC = () => {
 
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
       const snapshotUrl = canvas.toDataURL('image/jpeg', 0.92);
-      
-      const newSnapshot: Snapshot = {
-        id: crypto.randomUUID(),
-        url: snapshotUrl,
-        timestamp: new Date(),
-        threshold: currentThreshold
-      };
 
-      // We use the canvas to process the snapshot URL
-      const processed = await applyThreshold(snapshotUrl, currentThreshold);
-      newSnapshot.processedUrl = processed;
+      // Convert to data URL to truly freeze the image
+      const response = await fetch(snapshotUrl);
+      const blob = await response.blob();
+      const dataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
 
-      setSnapshots(prev => [newSnapshot, ...prev]);
-      setSelectedSnapshotId(newSnapshot.id);
+      setFrozenImageUrl(dataUrl);
+      setIsFrozen(true);
+      setFrozenThreshold(DEFAULT_CONFIG.DEFAULT_THRESHOLD);
+      setProcessedLiveImage(null);
+      addToHistory(dataUrl);
       setStatus(AppStatus.IDLE);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(`Failed to capture from local camera: ${message}`);
       setStatus(AppStatus.ERROR);
+      console.error('Freeze error:', err);
     }
   };
 
-  const updateThreshold = useCallback(async (id: string, val: number) => {
-    const snap = snapshots.find(s => s.id === id);
-    if (!snap) return;
-
-    try {
-      const processed = await applyThreshold(snap.url, val);
-      setSnapshots(prev => prev.map(s => 
-        s.id === id ? { ...s, threshold: val, processedUrl: processed } : s
-      ));
-    } catch (err) {
-      console.error("Threshold update failed", err);
-    }
-  }, [snapshots]);
-
-  const deleteSnapshot = (id: string) => {
-    setSnapshots(prev => prev.filter(s => s.id !== id));
-    if (selectedSnapshotId === id) setSelectedSnapshotId(null);
-  };
-
-  const selectedSnapshot = snapshots.find(s => s.id === selectedSnapshotId);
-
-  useEffect(() => {
-    // Clear OCR output and exit crop mode when switching snapshots.
+  const unfreezeStream = () => {
+    setIsFrozen(false);
+    setFrozenImageUrl(null);
+    setProcessedLiveImage(null);
     setOcrText('');
     setOcrError(null);
     setOcrProgress(null);
-    setCropping(false);
-    setCropStart(null);
-    setCropEnd(null);
-  }, [selectedSnapshotId]);
+  };
+
+  const updateFrozenThreshold = useCallback(async (val: number) => {
+    if (!frozenImageUrl || !isFrozen) return;
+    setFrozenThreshold(val);
+    try {
+      const processed = await applyThreshold(frozenImageUrl, val);
+      setProcessedLiveImage(processed);
+    } catch (err) {
+      console.error('Threshold update failed', err);
+    }
+  }, [frozenImageUrl, isFrozen]);
 
   const getCropRect = () => {
     if (!cropStart || !cropEnd || !cropImgRef.current) return null;
@@ -216,12 +284,12 @@ const App: React.FC = () => {
   };
 
   const applyCrop = async () => {
-    if (!selectedSnapshot) return;
+    if (!frozenImageUrl) return;
     const r = getCropRect();
     if (!r || (r.x2 - r.x1) < 0.01 || (r.y2 - r.y1) < 0.01) return;
 
     const img = new Image();
-    img.src = selectedSnapshot.url;
+    img.src = frozenImageUrl;
     await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; });
 
     const sx = Math.round(r.x1 * img.width);
@@ -236,10 +304,9 @@ const App: React.FC = () => {
     ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
     const croppedUrl = canvas.toDataURL('image/jpeg', 0.92);
 
-    const processed = await applyThreshold(croppedUrl, selectedSnapshot.threshold);
-    setSnapshots(prev => prev.map(s =>
-      s.id === selectedSnapshot.id ? { ...s, url: croppedUrl, processedUrl: processed } : s
-    ));
+    const processed = await applyThreshold(croppedUrl, frozenThreshold);
+    setFrozenImageUrl(croppedUrl);
+    setProcessedLiveImage(processed);
 
     setCropping(false);
     setCropStart(null);
@@ -254,7 +321,6 @@ const App: React.FC = () => {
 
   const cropOverlayStyle = (): React.CSSProperties | null => {
     if (!cropStart || !cropEnd || !cropImgRef.current) return null;
-    const rect = cropImgRef.current.getBoundingClientRect();
     const parentRect = cropImgRef.current.parentElement!.getBoundingClientRect();
     const left = Math.min(cropStart.x, cropEnd.x) - parentRect.left;
     const top = Math.min(cropStart.y, cropEnd.y) - parentRect.top;
@@ -338,14 +404,14 @@ const App: React.FC = () => {
   };
 
   const runOcr = async () => {
-    if (!selectedSnapshot) return;
     setOcrBusy(true);
     setOcrError(null);
     setOcrProgress(null);
+    setOcrText('');
     try {
-      const dataUrl = selectedSnapshot.processedUrl || selectedSnapshot.url;
+      const dataUrl = processedLiveImage || frozenImageUrl;
       if (!dataUrl || !dataUrl.startsWith('data:image/')) {
-        throw new Error('No image available yet.');
+        throw new Error('No image available. Capture a frame first.');
       }
 
       let text = '';
@@ -402,88 +468,149 @@ const App: React.FC = () => {
     }
   };
 
+  const downloadFrozenImage = () => {
+    if (!isFrozen) return;
+    const imageUrl = processedLiveImage || frozenImageUrl;
+    if (!imageUrl) return;
+    const link = document.createElement('a');
+    link.href = imageUrl;
+    link.download = `frozen_frame_${Date.now()}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const rotateFrozenImage = async () => {
+    if (!frozenImageUrl) return;
+    const img = new Image();
+    img.src = frozenImageUrl;
+    await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.height;
+    canvas.height = img.width;
+    const ctx = canvas.getContext('2d')!;
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(img, -img.width / 2, -img.height / 2);
+    const rotatedUrl = canvas.toDataURL('image/jpeg', 0.92);
+    const processed = await applyThreshold(rotatedUrl, frozenThreshold);
+    setFrozenImageUrl(rotatedUrl);
+    setProcessedLiveImage(processed);
+  };
+
+  const loadSample = async () => {
+    setStatus(AppStatus.CAPTURING);
+    setError(null);
+    try {
+      const response = await fetch('/sample-artifact.jpeg');
+      if (!response.ok) throw new Error('Could not load sample image.');
+      const blob = await response.blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      setFrozenImageUrl(dataUrl);
+      setIsFrozen(true);
+      setFrozenThreshold(DEFAULT_CONFIG.DEFAULT_THRESHOLD);
+      setProcessedLiveImage(null);
+      setOcrText('');
+      setOcrError(null);
+      setStatus(AppStatus.IDLE);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`Failed to load sample image: ${message}`);
+      setStatus(AppStatus.ERROR);
+    }
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 text-slate-900">
-      <aside className="w-80 border-r border-slate-200 bg-white/90 backdrop-blur flex flex-col shrink-0">
-        <div className="p-4 border-b border-purple-200 bg-gradient-to-r from-purple-100 to-pink-100 flex justify-between items-center">
-          <h2 className="text-lg font-bold flex items-center gap-2">
-            <ImageIcon className="w-5 h-5 text-purple-600" />
-            Gallery
-          </h2>
-          <span className="text-xs bg-purple-200 px-2 py-1 rounded-full text-purple-800 border border-purple-300 font-semibold">
-            {snapshots.length}
-          </span>
-        </div>
-        
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {snapshots.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-slate-600 text-center p-8 space-y-3">
-              <div className="w-16 h-16 rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-center">
-                <Camera className="w-8 h-8 text-sky-600" />
-              </div>
-              <p className="text-sm font-semibold">No snapshots yet</p>
-              <p className="text-xs text-slate-500">Press Capture to grab a frame.</p>
-            </div>
-          ) : (
-            snapshots.map(snap => (
-              <div 
-                key={snap.id}
-                onClick={() => setSelectedSnapshotId(snap.id)}
-                className={`group relative rounded-xl border-2 transition-all cursor-pointer overflow-hidden ${
-                  selectedSnapshotId === snap.id ? 'border-fuchsia-400 ring-4 ring-fuchsia-200/60 shadow-lg shadow-fuchsia-300/30' : 'border-transparent hover:border-purple-300 hover:shadow-md'
-                }`}
-              >
-                <img src={snap.processedUrl || snap.url} alt="" className="w-full h-32 object-cover bg-white" />
-                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-white/90 to-transparent flex justify-between items-end">
-                  <span className="text-[10px] text-slate-700 font-mono">{snap.timestamp.toLocaleTimeString()}</span>
-                  <button onClick={(e) => { e.stopPropagation(); deleteSnapshot(snap.id); }} className="p-1.5 bg-rose-500 hover:bg-rose-600 rounded text-white"><Trash2 className="w-3.5 h-3.5" /></button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </aside>
-
       <main className="flex-1 flex flex-col min-w-0">
         <header className="h-16 border-b border-purple-200 bg-gradient-to-r from-white via-purple-50 to-pink-50/80 backdrop-blur flex items-center justify-between px-6 z-20">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <Server className={`w-4 h-4 ${streamConnected ? 'text-cyan-600' : 'text-rose-600'}`} />
-              <h1 className="font-bold text-lg tracking-tight bg-gradient-to-r from-purple-600 via-pink-600 to-fuchsia-600 bg-clip-text text-transparent">ArtifactRecovery<span>Genie</span></h1>
+              <Server className={`w-6 h-6 ${streamConnected ? 'text-cyan-600' : 'text-rose-600'}`} />
+              <h1 className="font-bold text-2xl tracking-tight bg-gradient-to-r from-purple-600 via-pink-600 to-fuchsia-600 bg-clip-text text-transparent">Smart Portable Artifact Recovery<span> Kit </span></h1>
             </div>
-            <div className="text-[10px] bg-slate-50 px-2 py-1 rounded font-mono text-slate-600 border border-slate-200">
-              browser://local-camera
+            <div className="text-xs bg-slate-50 px-2 py-1 rounded font-mono text-slate-600 border border-slate-200">
+              {backendUrl}
             </div>
           </div>
-          
+
           <div className="flex items-center gap-3">
-             <button 
+            <button
+              onClick={() => setMirrorFlip(f => !f)}
+              className={`p-2 rounded-lg transition-colors ${mirrorFlip ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white' : 'hover:bg-purple-100 text-purple-700'}`}
+              title="Mirror flip"
+            >
+              <FlipHorizontal className="w-5 h-5" />
+            </button>
+            <button
+              onClick={() => setShowHistory(!showHistory)}
+              className={`p-2 rounded-lg transition-colors relative ${showHistory ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white' : 'hover:bg-purple-100 text-purple-700'}`}
+              title="Image history"
+            >
+              <History className="w-5 h-5" />
+              {capturedHistory.length > 0 && (
+                <span className="absolute top-0 right-0 w-5 h-5 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center">
+                  {Math.min(capturedHistory.length, 9)}
+                </span>
+              )}
+            </button>
+            <button
               onClick={() => setShowSettings(!showSettings)}
               className={`p-2 rounded-lg transition-colors ${showSettings ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white' : 'hover:bg-purple-100 text-purple-700'}`}
             >
-              <Settings className="w-5 h-5" />
+              <Settings className="w-6 h-6" />
             </button>
-            <button 
+            <button
               onClick={refreshStream}
               className="p-2 hover:bg-cyan-100 rounded-lg text-cyan-700"
             >
-              <RefreshCcw className={`w-5 h-5 ${!streamConnected ? 'animate-spin' : ''}`} />
+              <RefreshCcw className={`w-6 h-6 ${!streamConnected ? 'animate-spin' : ''}`} />
             </button>
-            <button 
-              onClick={captureSnapshot}
-              disabled={status === AppStatus.CAPTURING}
-              className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-fuchsia-500 to-pink-500 hover:from-fuchsia-400 hover:to-pink-400 disabled:bg-slate-200 rounded-full font-bold transition-all shadow-md hover:shadow-lg active:scale-95 text-white"
-            >
-              <Camera className="w-4 h-4" />
-              {status === AppStatus.CAPTURING ? 'Processing...' : 'Capture'}
-            </button>
+            {isFrozen ? (
+              <button
+                onClick={unfreezeStream}
+                className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400 rounded-full font-bold transition-all shadow-md hover:shadow-lg active:scale-95 text-white"
+              >
+                <RotateCcw className="w-5 h-5" />
+                Reset
+              </button>
+            ) : (
+              <button
+                onClick={freezeStream}
+                disabled={status === AppStatus.CAPTURING}
+                className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-fuchsia-500 to-pink-500 hover:from-fuchsia-400 hover:to-pink-400 disabled:bg-slate-200 rounded-full font-bold transition-all shadow-md hover:shadow-lg active:scale-95 text-white"
+              >
+                <Camera className="w-5 h-5" />
+                {status === AppStatus.CAPTURING ? 'Processing...' : 'Capture'}
+              </button>
+            )}
           </div>
         </header>
 
         {showSettings && (
           <div className="absolute top-16 right-6 w-80 bg-white/95 border border-purple-200 rounded-2xl shadow-xl z-30 p-4 backdrop-blur">
-            <h3 className="text-sm font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent uppercase tracking-widest mb-4">Local Camera</h3>
+            <h3 className="text-sm font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent uppercase tracking-widest mb-4">Settings</h3>
             <div className="space-y-4">
+              <div>
+                <label className="text-xs text-purple-700 block mb-1.5 font-semibold">Backend Server URL</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={backendUrl}
+                    onChange={(e) => setBackendUrl(e.target.value)}
+                    placeholder="http://localhost:8000"
+                    className="flex-1 bg-white border border-purple-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 transition-colors"
+                  />
+                  <button onClick={refreshStream} className="p-2 bg-purple-100 rounded-lg hover:bg-purple-200">
+                    <CheckCircle2 className="w-4 h-4 text-cyan-600" />
+                  </button>
+                </div>
+              </div>
               <div className="p-3 bg-gradient-to-r from-cyan-50 to-blue-50 border border-cyan-200 rounded-lg space-y-2">
                 <div className="flex gap-2 text-cyan-700">
                   <Info className="w-3 h-3 shrink-0 mt-0.5" />
@@ -507,22 +634,23 @@ const App: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 h-[calc(100%-2rem)]">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            {/* Live Stream Frame */}
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between px-1">
-                <span className="text-[10px] font-bold text-purple-700 uppercase tracking-[0.2em]">Source Input</span>
+                <span className="text-[10px] font-bold text-purple-700 uppercase tracking-[0.2em]">Live Stream</span>
                 <span className="flex items-center gap-1.5 text-[10px] font-bold text-white bg-gradient-to-r from-cyan-500 to-blue-500 px-2 py-0.5 rounded border border-cyan-300 shadow-sm">
                   WEBCAM
                 </span>
               </div>
-              <div className="h-48 bg-white rounded-2xl border border-cyan-200 overflow-hidden shadow-lg hover:shadow-xl transition-shadow relative">
+              <div className="h-64 bg-white rounded-2xl border border-cyan-200 overflow-hidden shadow-lg hover:shadow-xl transition-shadow relative">
                 {streamConnected ? (
                   <video
                     ref={liveVideoRef}
                     autoPlay
                     playsInline
                     muted
-                    className="w-full h-full object-contain bg-gradient-to-br from-blue-50 to-cyan-50"
+                    className={`w-full h-full object-contain bg-gradient-to-br from-blue-50 to-cyan-50 ${mirrorFlip ? 'scale-x-[-1]' : ''}`}
                   />
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-cyan-50 gap-4">
@@ -535,8 +663,246 @@ const App: React.FC = () => {
                 </div>
               </div>
 
+            </div>
+
+            {/* Captured Images History */}
+            {showHistory && (
+              <div className="flex flex-col gap-3 md:col-span-2">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[10px] font-bold text-purple-700 uppercase tracking-[0.2em]">Capture History</span>
+                  <span className="text-[10px] font-mono bg-slate-100 px-2 py-1 rounded text-slate-700">
+                    {capturedHistory.length} capture{capturedHistory.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+                <div className="bg-white rounded-2xl border border-purple-200 shadow-lg p-4">
+                  {capturedHistory.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-8 text-center">
+                      <History className="w-12 h-12 text-purple-300 mb-2" />
+                      <p className="text-sm text-purple-400 font-semibold">No captures yet</p>
+                      <p className="text-xs text-purple-300">Captured images will appear here</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 max-h-64 overflow-y-auto">
+                      {capturedHistory.map((img) => (
+                        <div
+                          key={img.id}
+                          className="relative group cursor-pointer rounded-lg overflow-hidden border-2 border-purple-200 hover:border-pink-400 transition-all hover:shadow-lg"
+                          onClick={() => loadFromHistory(img)}
+                        >
+                          <img
+                            src={img.thumbnail}
+                            alt={new Date(img.timestamp).toLocaleTimeString()}
+                            className="w-full h-24 object-cover bg-gradient-to-br from-purple-50 to-pink-50"
+                          />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                            <Camera className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeFromHistory(img.id);
+                            }}
+                            className="absolute top-1 right-1 p-1 bg-red-500 hover:bg-red-600 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                          <div className="absolute bottom-1 left-1 right-1 bg-white/80 backdrop-blur rounded px-1.5 py-0.5 text-[9px] font-mono text-slate-700 text-center truncate opacity-0 group-hover:opacity-100 transition-opacity">
+                            {new Date(img.timestamp).toLocaleTimeString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Frozen Frame */}
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[10px] font-bold text-purple-700 uppercase tracking-[0.2em]">Captured Frame</span>
+              </div>
+              <div className="h-64 bg-white rounded-2xl border border-purple-200 overflow-hidden shadow-lg hover:shadow-xl transition-shadow relative">
+                {isFrozen && frozenImageUrl ? (
+                  <>
+                    <div
+                      className={`w-full h-full relative overflow-hidden flex items-center justify-center ${cropping ? 'cursor-crosshair select-none' : ''}`}
+                      onMouseDown={handleCropMouseDown}
+                      onMouseMove={handleCropMouseMove}
+                      onMouseUp={handleCropMouseUp}
+                    >
+                      <img
+                        ref={cropImgRef}
+                        src={processedLiveImage || frozenImageUrl}
+                        alt="Frozen"
+                        className={`max-w-full max-h-full object-contain bg-gradient-to-br from-purple-50 to-pink-50 ${mirrorFlip ? 'scale-x-[-1]' : ''}`}
+                        crossOrigin="anonymous"
+                        draggable={false}
+                      />
+                      {cropping && cropStart && cropEnd && cropOverlayStyle() && (
+                        <div style={cropOverlayStyle()!} />
+                      )}
+                      <div className="absolute top-4 right-4 flex gap-2">
+                        {!cropping ? (
+                          <>
+                            <button
+                              onClick={() => setCropping(true)}
+                              className="p-2 bg-white/90 backdrop-blur rounded-lg hover:bg-white text-fuchsia-700 border border-purple-300 hover:shadow-md transition-all font-bold"
+                              title="Crop"
+                            >
+                              <Crop className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={rotateFrozenImage}
+                              className="p-2 bg-white/90 backdrop-blur rounded-lg hover:bg-white text-fuchsia-700 border border-purple-300 hover:shadow-md transition-all font-bold"
+                              title="Rotate 90°"
+                            >
+                              <RotateCw className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={downloadFrozenImage}
+                              className="p-2 bg-white/90 backdrop-blur rounded-lg hover:bg-white text-fuchsia-700 border border-purple-300 hover:shadow-md transition-all font-bold"
+                              title="Download"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={applyCrop}
+                              className="px-3 py-1.5 bg-gradient-to-r from-fuchsia-500 to-pink-500 hover:from-fuchsia-400 hover:to-pink-400 text-white text-[11px] font-bold rounded-lg shadow-md transition-all"
+                            >
+                              Apply Crop
+                            </button>
+                            <button
+                              onClick={cancelCrop}
+                              className="p-2 bg-white/90 backdrop-blur rounded-lg hover:bg-white text-rose-600 border border-rose-300 hover:shadow-md transition-all font-bold"
+                              title="Cancel"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      {cropping && !cropStart && (
+                        <div className="absolute bottom-4 left-0 right-0 text-center">
+                          <span className="px-3 py-1.5 bg-fuchsia-600/90 text-white text-[11px] font-bold rounded-lg shadow-md">
+                            Drag to select crop area
+                          </span>
+                        </div>
+                      )}
+                      <div className="absolute bottom-4 right-4 p-2 bg-black/70 backdrop-blur rounded-lg text-[8px] font-mono text-white">
+                        {processedLiveImage ? 'Processed' : 'Original'}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-purple-50 to-pink-50 gap-4">
+                    <Camera className="w-12 h-12 text-purple-300" />
+                    <p className="text-purple-400 text-xs font-mono font-semibold">Click Capture to freeze frame</p>
+                    <button
+                      onClick={loadSample}
+                      disabled={status === AppStatus.CAPTURING}
+                      className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-50 rounded-full text-white text-xs font-bold shadow transition-all active:scale-95"
+                    >
+                      Load Sample
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Image Controls */}
+              <div className="bg-white rounded-xl border border-cyan-200 p-4 shadow-md space-y-4">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Sliders className="w-4 h-4 text-cyan-600" />
+                      <h3 className="font-bold text-sm text-slate-800">Binary Threshold</h3>
+                    </div>
+                    <div className="text-xl font-mono text-fuchsia-700 font-black tracking-tighter">
+                      {frozenThreshold}
+                    </div>
+                  </div>
+
+                  <input
+                    type="range"
+                    min="0"
+                    max="255"
+                    value={frozenThreshold}
+                    onChange={(e) => updateFrozenThreshold(parseInt(e.target.value))}
+                    disabled={!isFrozen}
+                    className="w-full h-2 bg-gradient-to-r from-purple-300 to-pink-300 rounded-lg appearance-none cursor-pointer accent-fuchsia-600 shadow-sm disabled:opacity-40"
+                  />
+
+                  <div className="grid grid-cols-4 gap-2">
+                    {[0, 128, 200, 255].map((v) => (
+                      <button
+                        key={v}
+                        onClick={() => updateFrozenThreshold(v)}
+                        disabled={!isFrozen}
+                        className="text-[10px] py-1.5 bg-gradient-to-b from-purple-100 to-pink-100 hover:from-purple-200 hover:to-pink-200 rounded border border-purple-300 text-purple-800 font-bold transition-all disabled:opacity-40"
+                      >
+                        {v === 0 ? 'Min' : v === 255 ? 'Max' : v}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="pt-2 border-t border-purple-200 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-[10px] font-bold text-purple-700 uppercase tracking-[0.2em]">OCR</h4>
+                      <div className="flex items-center gap-1.5">
+                        <div className="relative">
+                          <select
+                            value={ocrModel}
+                            onChange={(e) => setOcrModel(e.target.value as 'trocr' | 'trocr-multi' | 'tesseract')}
+                            disabled={ocrBusy}
+                            className="appearance-none pl-2 pr-6 py-1.5 rounded-l-lg border border-r-0 border-purple-300 bg-gradient-to-b from-purple-50 to-pink-50 text-[11px] font-bold text-purple-800 cursor-pointer focus:outline-none disabled:opacity-50"
+                          >
+                            <option value="tesseract">Tesseract (multi-line)</option>
+                            <option value="trocr">TrOCR (single-line)</option>
+                            <option value="trocr-multi">TrOCR (auto multi-line)</option>
+                          </select>
+                          <ChevronDown className="w-3 h-3 absolute right-1.5 top-1/2 -translate-y-1/2 text-purple-500 pointer-events-none" />
+                        </div>
+                        <button
+                          onClick={runOcr}
+                          disabled={ocrBusy || !isFrozen}
+                          className="px-3 py-1.5 rounded-r-lg bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:bg-slate-300 text-white text-[11px] font-bold shadow-md hover:shadow-lg transition-all"
+                        >
+                          {ocrBusy ? 'Reading…' : 'Run OCR'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {ocrBusy && (
+                      <div className="text-[11px] text-purple-700 font-semibold">
+                        {ocrProgress != null ? `Progress: ${ocrProgress}%` : 'Loading OCR engine…'}
+                      </div>
+                    )}
+
+                    {ocrError && (
+                      <div className="text-[11px] text-rose-900 bg-rose-100 border border-rose-400 rounded-lg p-2 font-semibold">
+                        {ocrError}
+                      </div>
+                    )}
+
+                    <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-xl p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] text-purple-700 font-bold uppercase tracking-[0.2em]">Result</span>
+                        <span className="text-[10px] text-slate-500 font-mono"></span>
+                      </div>
+                      <pre className="whitespace-pre-wrap text-[12px] text-slate-800 leading-relaxed font-mono">
+                        {ocrText || '—'}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* OCR Model Guide */}
-              <div className="flex-1 bg-white rounded-2xl border border-purple-200 shadow-lg overflow-y-auto p-5 space-y-4">
+              <div className="bg-white rounded-2xl border border-purple-200 shadow-lg overflow-y-auto p-5 space-y-4">
                 <h3 className="text-xs font-bold text-purple-700 uppercase tracking-[0.15em] flex items-center gap-2">
                   <Info className="w-4 h-4 text-purple-500" />
                   OCR Engine Guide
@@ -738,169 +1104,6 @@ const App: React.FC = () => {
                         <span className="font-bold">💡 Tip:</span> The line detector works best when text lines are roughly horizontal. If the image is rotated, crop to straighten it first. Adjust threshold to maximize contrast between text and background — this helps the projection profile find clean line boundaries.
                       </p>
                     </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-[10px] font-bold text-purple-700 uppercase tracking-[0.2em]">Processing Layer</span>
-                {selectedSnapshot && <span className="text-[10px] font-mono text-fuchsia-700 font-bold">THR: {selectedSnapshot.threshold}</span>}
-              </div>
-              <div className="flex-1 bg-white rounded-2xl border border-purple-200 overflow-hidden shadow-lg flex flex-col">
-                {selectedSnapshot ? (
-                  <>
-                    <div
-                      className={`flex-1 relative bg-gradient-to-br from-purple-50 to-pink-50 overflow-hidden flex items-center justify-center ${cropping ? 'cursor-crosshair select-none' : ''}`}
-                      onMouseDown={handleCropMouseDown}
-                      onMouseMove={handleCropMouseMove}
-                      onMouseUp={handleCropMouseUp}
-                    >
-                       <img 
-                        ref={cropImgRef}
-                        src={selectedSnapshot.processedUrl || selectedSnapshot.url} 
-                        alt="" 
-                        className="max-w-full max-h-full object-contain"
-                        draggable={false}
-                      />
-                      {cropping && cropStart && cropEnd && cropOverlayStyle() && (
-                        <div style={cropOverlayStyle()!} />
-                      )}
-                      <div className="absolute top-4 right-4 flex gap-2">
-                        {!cropping ? (
-                          <>
-                            <button
-                              onClick={() => setCropping(true)}
-                              className="p-2 bg-white/90 backdrop-blur rounded-lg hover:bg-white text-fuchsia-700 border border-purple-300 hover:shadow-md transition-all font-bold"
-                              title="Crop"
-                            >
-                              <Crop className="w-4 h-4" />
-                            </button>
-                            <a 
-                              href={selectedSnapshot.processedUrl} 
-                              download={`capture_${Date.now()}.png`}
-                              className="p-2 bg-white/90 backdrop-blur rounded-lg hover:bg-white text-fuchsia-700 border border-purple-300 hover:shadow-md transition-all font-bold"
-                            >
-                              <Download className="w-4 h-4" />
-                            </a>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              onClick={applyCrop}
-                              className="px-3 py-1.5 bg-gradient-to-r from-fuchsia-500 to-pink-500 hover:from-fuchsia-400 hover:to-pink-400 text-white text-[11px] font-bold rounded-lg shadow-md transition-all"
-                            >
-                              Apply Crop
-                            </button>
-                            <button
-                              onClick={cancelCrop}
-                              className="p-2 bg-white/90 backdrop-blur rounded-lg hover:bg-white text-rose-600 border border-rose-300 hover:shadow-md transition-all font-bold"
-                              title="Cancel"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </>
-                        )}
-                      </div>
-                      {cropping && !cropStart && (
-                        <div className="absolute bottom-4 left-0 right-0 text-center">
-                          <span className="px-3 py-1.5 bg-fuchsia-600/90 text-white text-[11px] font-bold rounded-lg shadow-md">
-                            Drag to select crop area
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    
-                    <div className="p-6 bg-white border-t border-purple-200 space-y-6">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Sliders className="w-4 h-4 text-fuchsia-600" />
-                          <h3 className="font-bold text-sm text-slate-800">Binary Threshold</h3>
-                        </div>
-                        <div className="text-xl font-mono text-fuchsia-700 font-black tracking-tighter">
-                          {selectedSnapshot.threshold}
-                        </div>
-                      </div>
-                      
-                      <input 
-                        type="range" 
-                        min="0" 
-                        max="255" 
-                        value={selectedSnapshot.threshold}
-                        onChange={(e) => updateThreshold(selectedSnapshot.id, parseInt(e.target.value))}
-                        className="w-full h-2 bg-gradient-to-r from-purple-300 to-pink-300 rounded-lg appearance-none cursor-pointer accent-fuchsia-600 shadow-sm"
-                      />
-
-                      <div className="grid grid-cols-4 gap-2">
-                        {[0, 128, 200, 255].map((v) => (
-                          <button 
-                            key={v}
-                            onClick={() => updateThreshold(selectedSnapshot.id, v)}
-                            className="text-[10px] py-1.5 bg-gradient-to-b from-purple-100 to-pink-100 hover:from-purple-200 hover:to-pink-200 rounded border border-purple-300 text-purple-800 font-bold transition-all"
-                          >
-                            {v === 0 ? 'Min' : v === 255 ? 'Max' : v}
-                          </button>
-                        ))}
-                      </div>
-
-                      <div className="pt-2 border-t border-purple-200 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-[10px] font-bold text-purple-700 uppercase tracking-[0.2em]">OCR</h4>
-                          <div className="flex items-center gap-1.5">
-                            <div className="relative">
-                              <select
-                                value={ocrModel}
-                                onChange={(e) => setOcrModel(e.target.value as 'trocr' | 'trocr-multi' | 'tesseract')}
-                                disabled={ocrBusy}
-                                className="appearance-none pl-2 pr-6 py-1.5 rounded-l-lg border border-r-0 border-purple-300 bg-gradient-to-b from-purple-50 to-pink-50 text-[11px] font-bold text-purple-800 cursor-pointer focus:outline-none disabled:opacity-50"
-                              >
-                                <option value="tesseract">Tesseract (multi-line)</option>
-                                <option value="trocr">TrOCR (single-line)</option>
-                                <option value="trocr-multi">TrOCR (auto multi-line)</option>
-                              </select>
-                              <ChevronDown className="w-3 h-3 absolute right-1.5 top-1/2 -translate-y-1/2 text-purple-500 pointer-events-none" />
-                            </div>
-                            <button
-                              onClick={runOcr}
-                              disabled={ocrBusy}
-                              className="px-3 py-1.5 rounded-r-lg bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:bg-slate-300 text-white text-[11px] font-bold shadow-md hover:shadow-lg transition-all"
-                            >
-                              {ocrBusy ? 'Reading…' : 'Run OCR'}
-                            </button>
-                          </div>
-                        </div>
-
-                        {ocrBusy && (
-                          <div className="text-[11px] text-purple-700 font-semibold">
-                            {ocrProgress != null ? `Progress: ${ocrProgress}%` : 'Loading OCR engine…'}
-                          </div>
-                        )}
-
-                        {ocrError && (
-                          <div className="text-[11px] text-rose-900 bg-rose-100 border border-rose-400 rounded-lg p-2 font-semibold">
-                            {ocrError}
-                          </div>
-                        )}
-
-                        <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-xl p-3">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] text-purple-700 font-bold uppercase tracking-[0.2em]">Result</span>
-                            <span className="text-[10px] text-slate-500 font-mono"></span>
-                          </div>
-                          <pre className="whitespace-pre-wrap text-[12px] text-slate-800 leading-relaxed font-mono">
-                            {ocrText || '—'}
-                          </pre>
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center text-slate-600 gap-4">
-                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-100 to-pink-100 border border-purple-300 flex items-center justify-center shadow-sm">
-                      <ImageIcon className="w-7 h-7 text-fuchsia-600" />
-                    </div>
-                    <p className="text-xs uppercase font-bold tracking-[0.2em] text-purple-700">Select Input Frame</p>
                   </div>
                 )}
               </div>
