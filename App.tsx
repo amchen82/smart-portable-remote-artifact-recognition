@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Camera, RefreshCcw, Sliders, RotateCcw, RotateCw, Settings, Server, CheckCircle2, AlertCircle, Info, Crop, X, ChevronDown, FlipHorizontal, Download, Trash2, History } from 'lucide-react';
 import { DEFAULT_CONFIG } from './constants';
 import { AppStatus } from './types';
-import { applyThreshold } from './services/imageProcessor';
+import { applyPreprocessing } from './services/imageProcessor';
 
 interface CapturedImage {
   id: string;
@@ -30,6 +30,9 @@ const App: React.FC = () => {
   const [mirrorFlip, setMirrorFlip] = useState(false);
   const [processedLiveImage, setProcessedLiveImage] = useState<string | null>(null);
   const [frozenThreshold, setFrozenThreshold] = useState(DEFAULT_CONFIG.DEFAULT_THRESHOLD);
+  const [holePatchingStrength, setHolePatchingStrength] = useState(0);
+  const [noiseRemovalStrength, setNoiseRemovalStrength] = useState(0);
+  const [smoothingStrength, setSmoothingStrength] = useState(0);
 
   const [cropping, setCropping] = useState(false);
   const [cropStart, setCropStart] = useState<{ x: number; y: number } | null>(null);
@@ -49,6 +52,9 @@ const App: React.FC = () => {
     setProcessedLiveImage(null);
     setOcrText('');
     setOcrError(null);
+    setHolePatchingStrength(0);
+    setNoiseRemovalStrength(0);
+    setSmoothingStrength(0);
     setStreamConnected(false);
     setCameraRefreshToken((value) => value + 1);
   };
@@ -106,11 +112,49 @@ const App: React.FC = () => {
     setFrozenImageUrl(capturedImage.dataUrl);
     setIsFrozen(true);
     setFrozenThreshold(DEFAULT_CONFIG.DEFAULT_THRESHOLD);
+    setHolePatchingStrength(0);
+    setNoiseRemovalStrength(0);
+    setSmoothingStrength(0);
     setProcessedLiveImage(null);
     setOcrText('');
     setOcrError(null);
     setShowHistory(false);
   };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshProcessedImage = async () => {
+      if (!isFrozen || !frozenImageUrl) {
+        setProcessedLiveImage(null);
+        return;
+      }
+
+      try {
+        const processed = await applyPreprocessing(frozenImageUrl, {
+          threshold: frozenThreshold,
+          holePatchingStrength,
+          noiseRemovalStrength,
+          smoothingStrength,
+        });
+
+        if (!cancelled) {
+          setProcessedLiveImage(processed);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Preprocessing failed', err);
+          setProcessedLiveImage(null);
+        }
+      }
+    };
+
+    void refreshProcessedImage();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [frozenImageUrl, frozenThreshold, holePatchingStrength, noiseRemovalStrength, smoothingStrength, isFrozen]);
 
   useEffect(() => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -212,7 +256,6 @@ const App: React.FC = () => {
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
       const snapshotUrl = canvas.toDataURL('image/jpeg', 0.92);
 
-      // Convert to data URL to truly freeze the image
       const response = await fetch(snapshotUrl);
       const blob = await response.blob();
       const dataUrl = await new Promise<string>((resolve) => {
@@ -244,16 +287,9 @@ const App: React.FC = () => {
     setOcrProgress(null);
   };
 
-  const updateFrozenThreshold = useCallback(async (val: number) => {
-    if (!frozenImageUrl || !isFrozen) return;
+  const updateFrozenThreshold = (val: number) => {
     setFrozenThreshold(val);
-    try {
-      const processed = await applyThreshold(frozenImageUrl, val);
-      setProcessedLiveImage(processed);
-    } catch (err) {
-      console.error('Threshold update failed', err);
-    }
-  }, [frozenImageUrl, isFrozen]);
+  };
 
   const getCropRect = () => {
     if (!cropStart || !cropEnd || !cropImgRef.current) return null;
@@ -304,9 +340,8 @@ const App: React.FC = () => {
     ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
     const croppedUrl = canvas.toDataURL('image/jpeg', 0.92);
 
-    const processed = await applyThreshold(croppedUrl, frozenThreshold);
     setFrozenImageUrl(croppedUrl);
-    setProcessedLiveImage(processed);
+    setProcessedLiveImage(null);
 
     setCropping(false);
     setCropStart(null);
@@ -493,9 +528,8 @@ const App: React.FC = () => {
     ctx.rotate(Math.PI / 2);
     ctx.drawImage(img, -img.width / 2, -img.height / 2);
     const rotatedUrl = canvas.toDataURL('image/jpeg', 0.92);
-    const processed = await applyThreshold(rotatedUrl, frozenThreshold);
     setFrozenImageUrl(rotatedUrl);
-    setProcessedLiveImage(processed);
+    setProcessedLiveImage(null);
   };
 
   const loadSample = async () => {
@@ -655,7 +689,7 @@ const App: React.FC = () => {
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-cyan-50 gap-4">
                     <RefreshCcw className="w-8 h-8 text-cyan-500 animate-spin" />
-                    <p className="text-cyan-700 text-xs font-mono font-semibold">Opening local camera…</p>
+                    <p className="text-cyan-700 text-xs font-mono font-semibold">Opening local cameraGǪ</p>
                   </div>
                 )}
                 <div className="absolute top-4 left-4 p-2 bg-white/90 backdrop-blur rounded-lg text-[10px] font-mono border border-cyan-300 uppercase tracking-widest text-cyan-700 font-bold shadow-sm">
@@ -756,7 +790,7 @@ const App: React.FC = () => {
                             <button
                               onClick={rotateFrozenImage}
                               className="p-2 bg-white/90 backdrop-blur rounded-lg hover:bg-white text-fuchsia-700 border border-purple-300 hover:shadow-md transition-all font-bold"
-                              title="Rotate 90°"
+                              title="Rotate 90-�"
                             >
                               <RotateCw className="w-4 h-4" />
                             </button>
@@ -816,6 +850,60 @@ const App: React.FC = () => {
               {/* Image Controls */}
               <div className="bg-white rounded-xl border border-cyan-200 p-4 shadow-md space-y-4">
                 <div className="space-y-3">
+                  <div className="space-y-3 pb-3 border-b border-purple-100">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Sliders className="w-4 h-4 text-cyan-600" />
+                        <h3 className="font-bold text-sm text-slate-800">Preprocessing</h3>
+                      </div>
+                      <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-[0.18em]">Before threshold</span>
+                    </div>
+
+                    <div className="space-y-3">
+                      {[
+                        {
+                          label: 'Smoothing',
+                          value: smoothingStrength,
+                          setValue: setSmoothingStrength,
+                          help: 'Soft blur before thresholding',
+                        },
+                        {
+                          label: 'Noise Removal',
+                          value: noiseRemovalStrength,
+                          setValue: setNoiseRemovalStrength,
+                          help: 'Clear isolated black specks after thresholding',
+                        },
+                        {
+                          label: 'Hole Patching',
+                          value: holePatchingStrength,
+                          setValue: setHolePatchingStrength,
+                          help: 'Fill tiny white gaps inside text strokes',
+                        },
+                      ].map((item) => (
+                        <div key={item.label} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="text-[11px] font-bold text-slate-800">{item.label}</div>
+                              <div className="text-[10px] text-slate-500">{item.help}</div>
+                            </div>
+                            <div className="text-[11px] font-black text-cyan-700 tabular-nums">
+                              {item.value}%
+                            </div>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={item.value}
+                            onChange={(e) => item.setValue(parseInt(e.target.value, 10))}
+                            disabled={!isFrozen}
+                            className="mt-2 w-full h-2 bg-gradient-to-r from-cyan-200 via-purple-200 to-pink-200 rounded-lg appearance-none cursor-pointer accent-cyan-600 shadow-sm disabled:opacity-40"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Sliders className="w-4 h-4 text-cyan-600" />
@@ -871,14 +959,14 @@ const App: React.FC = () => {
                           disabled={ocrBusy || !isFrozen}
                           className="px-3 py-1.5 rounded-r-lg bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:bg-slate-300 text-white text-[11px] font-bold shadow-md hover:shadow-lg transition-all"
                         >
-                          {ocrBusy ? 'Reading…' : 'Run OCR'}
+                          {ocrBusy ? 'ReadingGǪ' : 'Run OCR'}
                         </button>
                       </div>
                     </div>
 
                     {ocrBusy && (
                       <div className="text-[11px] text-purple-700 font-semibold">
-                        {ocrProgress != null ? `Progress: ${ocrProgress}%` : 'Loading OCR engine…'}
+                        {ocrProgress != null ? `Progress: ${ocrProgress}%` : 'Loading OCR engineGǪ'}
                       </div>
                     )}
 
@@ -894,7 +982,7 @@ const App: React.FC = () => {
                         <span className="text-[10px] text-slate-500 font-mono"></span>
                       </div>
                       <pre className="whitespace-pre-wrap text-[12px] text-slate-800 leading-relaxed font-mono">
-                        {ocrText || '—'}
+                        {ocrText || 'G��'}
                       </pre>
                     </div>
                   </div>
@@ -912,15 +1000,15 @@ const App: React.FC = () => {
                 <div className="bg-gradient-to-r from-slate-50 to-purple-50 border border-slate-200 rounded-xl p-4">
                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Pipeline</p>
                   <div className="flex items-center justify-center gap-1 text-[10px] font-bold flex-wrap">
-                    <span className="px-2 py-1 bg-cyan-100 text-cyan-800 rounded border border-cyan-200">📷 Capture</span>
-                    <span className="text-slate-400">→</span>
-                    <span className="px-2 py-1 bg-fuchsia-100 text-fuchsia-800 rounded border border-fuchsia-200">✂️ Crop (optional)</span>
-                    <span className="text-slate-400">→</span>
-                    <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded border border-purple-200">🎚️ Threshold</span>
-                    <span className="text-slate-400">→</span>
-                    <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded border border-blue-200">🔍 OCR</span>
-                    <span className="text-slate-400">→</span>
-                    <span className="px-2 py-1 bg-green-100 text-green-800 rounded border border-green-200">📝 Text</span>
+                    <span className="px-2 py-1 bg-cyan-100 text-cyan-800 rounded border border-cyan-200">=��+ Capture</span>
+                    <span className="text-slate-400">G��</span>
+                    <span className="px-2 py-1 bg-fuchsia-100 text-fuchsia-800 rounded border border-fuchsia-200">G��n+� Crop (optional)</span>
+                    <span className="text-slate-400">G��</span>
+                    <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded border border-purple-200">=���n+� Threshold</span>
+                    <span className="text-slate-400">G��</span>
+                    <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded border border-blue-200">=��� OCR</span>
+                    <span className="text-slate-400">G��</span>
+                    <span className="px-2 py-1 bg-green-100 text-green-800 rounded border border-green-200">=��� Text</span>
                   </div>
                 </div>
 
@@ -936,13 +1024,13 @@ const App: React.FC = () => {
                       <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-cyan-700 mb-2">How It Reads A Page</p>
                       <div className="flex flex-wrap items-center gap-1 text-[10px] font-bold text-cyan-900">
                         <span className="px-2 py-1 rounded border border-cyan-200 bg-cyan-50">Page image</span>
-                        <span className="text-cyan-400">→</span>
+                        <span className="text-cyan-400">G��</span>
                         <span className="px-2 py-1 rounded border border-cyan-200 bg-cyan-50">Layout analysis</span>
-                        <span className="text-cyan-400">→</span>
+                        <span className="text-cyan-400">G��</span>
                         <span className="px-2 py-1 rounded border border-cyan-200 bg-cyan-50">Lines / words</span>
-                        <span className="text-cyan-400">→</span>
+                        <span className="text-cyan-400">G��</span>
                         <span className="px-2 py-1 rounded border border-cyan-200 bg-cyan-50">LSTM reads sequence</span>
-                        <span className="text-cyan-400">→</span>
+                        <span className="text-cyan-400">G��</span>
                         <span className="px-2 py-1 rounded border border-cyan-200 bg-cyan-50">Text + dictionary cleanup</span>
                       </div>
                       <div className="mt-3 grid grid-cols-3 gap-2 text-[9px] text-slate-600">
@@ -963,7 +1051,7 @@ const App: React.FC = () => {
 
                     <div className="text-[10px] text-slate-700 leading-[1.7] space-y-2">
                       <p>
-                        <span className="font-bold text-cyan-800">What it is:</span> Tesseract is one of the oldest and most widely-used OCR engines, originally developed by HP in the 1980s and now maintained by Google. It uses an <span className="font-semibold">LSTM (Long Short-Term Memory)</span> neural network — a type of recurrent network designed for sequences — to recognize characters line by line.
+                        <span className="font-bold text-cyan-800">What it is:</span> Tesseract is one of the oldest and most widely-used OCR engines, originally developed by HP in the 1980s and now maintained by Google. It uses an <span className="font-semibold">LSTM (Long Short-Term Memory)</span> neural network G�� a type of recurrent network designed for sequences G�� to recognize characters line by line.
                       </p>
                       <p>
                         <span className="font-bold text-cyan-800">How it works:</span> The engine first analyzes the page layout to find text blocks and lines. It then segments each line into words and characters. The LSTM network reads these sequences left-to-right, predicting the most likely character at each position. It uses a built-in language dictionary to correct common misreads.
@@ -974,16 +1062,16 @@ const App: React.FC = () => {
                     </div>
 
                     <div className="flex gap-1.5 flex-wrap">
-                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">✓ Multi-line</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">✓ Fast</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">✓ Full page layout</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">△ Struggles with noise</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">△ Needs clean contrast</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">G�� Multi-line</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">G�� Fast</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">G�� Full page layout</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">G�� Struggles with noise</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">G�� Needs clean contrast</span>
                     </div>
 
                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5">
                       <p className="text-[10px] text-amber-900 leading-relaxed">
-                        <span className="font-bold">💡 Tip:</span> Use the threshold slider to make text as dark as possible against a white background before running Tesseract. This mimics a "clean photocopy" which Tesseract handles best.
+                        <span className="font-bold">=��� Tip:</span> Use the threshold slider to make text as dark as possible against a white background before running Tesseract. This mimics a "clean photocopy" which Tesseract handles best.
                       </p>
                     </div>
                   </div>
@@ -1000,13 +1088,13 @@ const App: React.FC = () => {
                       <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-purple-700 mb-2">Model Diagram</p>
                       <div className="flex flex-wrap items-center gap-1 text-[10px] font-bold text-purple-900">
                         <span className="px-2 py-1 rounded border border-purple-200 bg-purple-50">Single text line</span>
-                        <span className="text-purple-400">→</span>
+                        <span className="text-purple-400">G��</span>
                         <span className="px-2 py-1 rounded border border-purple-200 bg-purple-50">16x16 image patches</span>
-                        <span className="text-purple-400">→</span>
+                        <span className="text-purple-400">G��</span>
                         <span className="px-2 py-1 rounded border border-purple-200 bg-purple-50">Vision Transformer</span>
-                        <span className="text-purple-400">→</span>
+                        <span className="text-purple-400">G��</span>
                         <span className="px-2 py-1 rounded border border-purple-200 bg-purple-50">GPT-2 decoder</span>
-                        <span className="text-purple-400">→</span>
+                        <span className="text-purple-400">G��</span>
                         <span className="px-2 py-1 rounded border border-purple-200 bg-purple-50">Generated text</span>
                       </div>
                       <div className="mt-3 rounded border border-slate-200 bg-slate-50 p-2 text-[9px] text-slate-600 leading-relaxed">
@@ -1016,27 +1104,27 @@ const App: React.FC = () => {
 
                     <div className="text-[10px] text-slate-700 leading-[1.7] space-y-2">
                       <p>
-                        <span className="font-bold text-purple-800">What it is:</span> TrOCR (Transformer-based OCR) is a deep learning model by Microsoft Research that combines a <span className="font-semibold">Vision Transformer (ViT)</span> image encoder with a <span className="font-semibold">GPT-2 text decoder</span>. Unlike Tesseract which was engineered with rules, TrOCR learned to read entirely from training data — millions of text images paired with their correct transcriptions.
+                        <span className="font-bold text-purple-800">What it is:</span> TrOCR (Transformer-based OCR) is a deep learning model by Microsoft Research that combines a <span className="font-semibold">Vision Transformer (ViT)</span> image encoder with a <span className="font-semibold">GPT-2 text decoder</span>. Unlike Tesseract which was engineered with rules, TrOCR learned to read entirely from training data G�� millions of text images paired with their correct transcriptions.
                       </p>
                       <p>
-                        <span className="font-bold text-purple-800">How it works:</span> The ViT encoder splits the image into 16×16 pixel patches and processes them as a sequence (like words in a sentence). It learns spatial relationships between patches using self-attention. The GPT-2 decoder then generates text one character at a time, attending to the visual features. This approach is similar to how image captioning models work.
+                        <span className="font-bold text-purple-800">How it works:</span> The ViT encoder splits the image into 16+�16 pixel patches and processes them as a sequence (like words in a sentence). It learns spatial relationships between patches using self-attention. The GPT-2 decoder then generates text one character at a time, attending to the visual features. This approach is similar to how image captioning models work.
                       </p>
                       <p>
-                        <span className="font-bold text-purple-800">Best for:</span> Single lines of text that are noisy, distorted, handwritten, or photographed at an angle. Crop your image to one line first using the ✂️ Crop tool, then run this model.
+                        <span className="font-bold text-purple-800">Best for:</span> Single lines of text that are noisy, distorted, handwritten, or photographed at an angle. Crop your image to one line first using the G��n+� Crop tool, then run this model.
                       </p>
                     </div>
 
                     <div className="flex gap-1.5 flex-wrap">
-                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">✓ High accuracy</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">✓ Handles noise</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">✓ Handwriting</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">△ Single line only</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">△ Slower</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">G�� High accuracy</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">G�� Handles noise</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">G�� Handwriting</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">G�� Single line only</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">G�� Slower</span>
                     </div>
 
                     <div className="bg-purple-100/60 border border-purple-200 rounded-lg p-2.5">
                       <p className="text-[10px] text-purple-900 leading-relaxed">
-                        <span className="font-bold">💡 Tip:</span> Use the Crop tool to select just one line of text. TrOCR reads the entire image as if it were a single line — if there are multiple lines, it may merge or skip them.
+                        <span className="font-bold">=��� Tip:</span> Use the Crop tool to select just one line of text. TrOCR reads the entire image as if it were a single line G�� if there are multiple lines, it may merge or skip them.
                       </p>
                     </div>
                   </div>
@@ -1053,15 +1141,15 @@ const App: React.FC = () => {
                       <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-fuchsia-700">Two-Stage Diagram</p>
                       <div className="flex flex-wrap items-center gap-1 text-[10px] font-bold text-fuchsia-900">
                         <span className="px-2 py-1 rounded border border-fuchsia-200 bg-fuchsia-50">Full page</span>
-                        <span className="text-fuchsia-400">→</span>
+                        <span className="text-fuchsia-400">G��</span>
                         <span className="px-2 py-1 rounded border border-fuchsia-200 bg-fuchsia-50">Count dark pixels per row</span>
-                        <span className="text-fuchsia-400">→</span>
+                        <span className="text-fuchsia-400">G��</span>
                         <span className="px-2 py-1 rounded border border-fuchsia-200 bg-fuchsia-50">Line bands</span>
-                        <span className="text-fuchsia-400">→</span>
+                        <span className="text-fuchsia-400">G��</span>
                         <span className="px-2 py-1 rounded border border-fuchsia-200 bg-fuchsia-50">Crop each band</span>
-                        <span className="text-fuchsia-400">→</span>
+                        <span className="text-fuchsia-400">G��</span>
                         <span className="px-2 py-1 rounded border border-fuchsia-200 bg-fuchsia-50">Run TrOCR per line</span>
-                        <span className="text-fuchsia-400">→</span>
+                        <span className="text-fuchsia-400">G��</span>
                         <span className="px-2 py-1 rounded border border-fuchsia-200 bg-fuchsia-50">Join outputs</span>
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-[9px] text-slate-600">
@@ -1084,24 +1172,24 @@ const App: React.FC = () => {
                         <span className="font-bold text-fuchsia-800">How line detection works:</span> The algorithm scans every row of pixels and counts how many are "dark" (ink). Rows with many dark pixels are text; rows with few are gaps between lines. It groups consecutive text rows into bands, adds padding, and crops each band into a separate image. This technique has been used in document analysis since the 1960s.
                       </p>
                       <p>
-                        <span className="font-bold text-fuchsia-800">Then what happens:</span> Each cropped line image is passed through the TrOCR Vision Transformer encoder → GPT-2 decoder pipeline. Results from all lines are combined top-to-bottom into the final output text.
+                        <span className="font-bold text-fuchsia-800">Then what happens:</span> Each cropped line image is passed through the TrOCR Vision Transformer encoder G�� GPT-2 decoder pipeline. Results from all lines are combined top-to-bottom into the final output text.
                       </p>
                       <p>
-                        <span className="font-bold text-fuchsia-800">Best for:</span> Multi-line handwritten or printed text where you want higher accuracy than Tesseract. Ideal for artifact inscriptions, letters, or notes with 2–10 lines.
+                        <span className="font-bold text-fuchsia-800">Best for:</span> Multi-line handwritten or printed text where you want higher accuracy than Tesseract. Ideal for artifact inscriptions, letters, or notes with 2G��10 lines.
                       </p>
                     </div>
 
                     <div className="flex gap-1.5 flex-wrap">
-                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">✓ Multi-line</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">✓ High accuracy</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">✓ Auto line detection</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">△ Slowest option</span>
-                      <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">△ Needs horizontal text</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">G�� Multi-line</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">G�� High accuracy</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded font-bold">G�� Auto line detection</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">G�� Slowest option</span>
+                      <span className="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">G�� Needs horizontal text</span>
                     </div>
 
                     <div className="bg-fuchsia-100/60 border border-fuchsia-200 rounded-lg p-2.5">
                       <p className="text-[10px] text-fuchsia-900 leading-relaxed">
-                        <span className="font-bold">💡 Tip:</span> The line detector works best when text lines are roughly horizontal. If the image is rotated, crop to straighten it first. Adjust threshold to maximize contrast between text and background — this helps the projection profile find clean line boundaries.
+                        <span className="font-bold">=��� Tip:</span> The line detector works best when text lines are roughly horizontal. If the image is rotated, crop to straighten it first. Adjust threshold to maximize contrast between text and background G�� this helps the projection profile find clean line boundaries.
                       </p>
                     </div>
                   </div>
