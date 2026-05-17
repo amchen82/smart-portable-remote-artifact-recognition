@@ -19,6 +19,9 @@ const App: React.FC = () => {
   const [frozenImageUrl, setFrozenImageUrl] = useState<string | null>(null);
 
   const [backendUrl, setBackendUrl] = useState('http://localhost:8000');
+  const [cameraSourceMode, setCameraSourceMode] = useState<'webcam' | 'network'>('webcam');
+  const [cameraIp, setCameraIp] = useState('192.168.86.60');
+  const [cameraIpInput, setCameraIpInput] = useState('192.168.86.60');
   const [showSettings, setShowSettings] = useState(false);
   const [cameraRefreshToken, setCameraRefreshToken] = useState(0);
 
@@ -40,7 +43,12 @@ const App: React.FC = () => {
   const [showHistory, setShowHistory] = useState(false);
 
   const liveVideoRef = useRef<HTMLVideoElement | null>(null);
+  const networkImageRef = useRef<HTMLImageElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+
+  const networkVideoUrl = `http://${cameraIp}/video`;
+  const pageIsHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  const mixedContentLikelyBlocked = pageIsHttps && cameraSourceMode === 'network';
 
   const refreshStream = () => {
     setError(null);
@@ -113,6 +121,21 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
+    if (cameraSourceMode !== 'webcam') {
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+      }
+      if (mixedContentLikelyBlocked) {
+        setStreamConnected(false);
+        setError('HTTPS page cannot load an HTTP camera stream. Use an HTTPS proxy URL (for example your backend tunnel) instead of http://192.168.86.60/video.');
+      } else {
+        setStreamConnected(true);
+        setError(null);
+      }
+      return;
+    }
+
     if (!navigator.mediaDevices?.getUserMedia) {
       setStreamConnected(false);
       setError('This browser does not support direct camera access.');
@@ -189,37 +212,45 @@ const App: React.FC = () => {
         mediaStreamRef.current = null;
       }
     };
-  }, [cameraRefreshToken]);
+  }, [cameraRefreshToken, cameraSourceMode, mixedContentLikelyBlocked]);
+
+  const captureFromNetworkStream = async (): Promise<string> => {
+    const snapshotUrl = `http://${cameraIp}/snapshot`;
+    const resp = await fetch(snapshotUrl);
+    if (!resp.ok) throw new Error(`Snapshot request failed: ${resp.status} ${resp.statusText}`);
+    const blob = await resp.blob();
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
 
   const freezeStream = async () => {
     setStatus(AppStatus.CAPTURING);
     setError(null);
     try {
-      const video = liveVideoRef.current;
-      if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
-        throw new Error('Local camera is not ready yet. Wait a second and try again.');
-      }
+      const dataUrl = cameraSourceMode === 'webcam'
+        ? (() => {
+            const video = liveVideoRef.current;
+            if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
+              throw new Error('Local camera is not ready yet. Wait a second and try again.');
+            }
 
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
 
-      const context = canvas.getContext('2d');
-      if (!context) {
-        throw new Error('Could not create capture canvas.');
-      }
+            const context = canvas.getContext('2d');
+            if (!context) {
+              throw new Error('Could not create capture canvas.');
+            }
 
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const snapshotUrl = canvas.toDataURL('image/jpeg', 0.92);
-
-      // Convert to data URL to truly freeze the image
-      const response = await fetch(snapshotUrl);
-      const blob = await response.blob();
-      const dataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(blob);
-      });
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            return canvas.toDataURL('image/jpeg', 0.92);
+          })()
+        : await captureFromNetworkStream();
 
       setFrozenImageUrl(dataUrl);
       setIsFrozen(true);
@@ -229,7 +260,7 @@ const App: React.FC = () => {
       setStatus(AppStatus.IDLE);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setError(`Failed to capture from local camera: ${message}`);
+      setError(`Failed to capture frame: ${message}`);
       setStatus(AppStatus.ERROR);
       console.error('Freeze error:', err);
     }
@@ -498,12 +529,20 @@ const App: React.FC = () => {
     setProcessedLiveImage(processed);
   };
 
-  const loadSample = async () => {
+  const SAMPLES = [
+    { label: 'Original Artifact',    file: '/sample-artifact.jpeg' },
+    { label: 'Unearthed (parchment)', file: '/unearthed.png' },
+  ];
+
+  const [showSampleMenu, setShowSampleMenu] = useState(false);
+
+  const loadSampleFile = async (path: string) => {
+    setShowSampleMenu(false);
     setStatus(AppStatus.CAPTURING);
     setError(null);
     try {
-      const response = await fetch('/sample-artifact.jpeg');
-      if (!response.ok) throw new Error('Could not load sample image.');
+      const response = await fetch(path);
+      if (!response.ok) throw new Error(`Could not load sample (${response.status}).`);
       const blob = await response.blob();
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -537,6 +576,29 @@ const App: React.FC = () => {
             <div className="text-xs bg-slate-50 px-2 py-1 rounded font-mono text-slate-600 border border-slate-200">
               {backendUrl}
             </div>
+            {cameraSourceMode === 'network' && (
+              <form
+                onSubmit={(e) => { e.preventDefault(); setCameraIp(cameraIpInput); refreshStream(); }}
+                className="flex items-center gap-1.5"
+              >
+                <span className="text-[10px] font-bold text-purple-600 uppercase tracking-widest">ESP32 IP</span>
+                <input
+                  type="text"
+                  value={cameraIpInput}
+                  onChange={(e) => setCameraIpInput(e.target.value)}
+                  placeholder="192.168.x.x"
+                  className="w-32 bg-white border border-purple-200 rounded-lg px-2 py-1 text-xs font-mono focus:outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-100 transition-colors"
+                  title="Enter ESP32 IP address"
+                />
+                <button
+                  type="submit"
+                  className="p-1.5 bg-purple-100 hover:bg-purple-200 rounded-lg transition-colors"
+                  title="Connect"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-cyan-600" />
+                </button>
+              </form>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -597,6 +659,17 @@ const App: React.FC = () => {
             <h3 className="text-sm font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent uppercase tracking-widest mb-4">Settings</h3>
             <div className="space-y-4">
               <div>
+                <label className="text-xs text-purple-700 block mb-1.5 font-semibold">Camera Source</label>
+                <select
+                  value={cameraSourceMode}
+                  onChange={(e) => setCameraSourceMode(e.target.value as 'webcam' | 'network')}
+                  className="w-full bg-white border border-purple-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 transition-colors"
+                >
+                  <option value="webcam">Local Webcam (getUserMedia)</option>
+                  <option value="network">Network MJPEG URL (ESP32/Proxy)</option>
+                </select>
+              </div>
+              <div>
                 <label className="text-xs text-purple-700 block mb-1.5 font-semibold">Backend Server URL</label>
                 <div className="flex gap-2">
                   <input
@@ -611,15 +684,41 @@ const App: React.FC = () => {
                   </button>
                 </div>
               </div>
+              {cameraSourceMode === 'network' && (
+                <div>
+                  <label className="text-xs text-purple-700 block mb-1.5 font-semibold">ESP32 IP Address</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={cameraIpInput}
+                      onChange={(e) => setCameraIpInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { setCameraIp(cameraIpInput); refreshStream(); } }}
+                      placeholder="192.168.x.x"
+                      className="flex-1 bg-white border border-purple-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 transition-colors"
+                    />
+                    <button onClick={() => { setCameraIp(cameraIpInput); refreshStream(); }} className="p-2 bg-purple-100 rounded-lg hover:bg-purple-200">
+                      <CheckCircle2 className="w-4 h-4 text-cyan-600" />
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1 font-mono">Stream: {networkVideoUrl}</p>
+                </div>
+              )}
+              {cameraSourceMode === 'network' && mixedContentLikelyBlocked && (
+                <div className="p-3 bg-amber-50 border border-amber-300 rounded-lg">
+                  <p className="text-[11px] leading-relaxed text-amber-900">
+                    GitHub Pages runs on HTTPS, so browser blocks HTTP camera URLs like 192.168.x.x. Use an HTTPS proxy URL for the stream.
+                  </p>
+                </div>
+              )}
               <div className="p-3 bg-gradient-to-r from-cyan-50 to-blue-50 border border-cyan-200 rounded-lg space-y-2">
                 <div className="flex gap-2 text-cyan-700">
                   <Info className="w-3 h-3 shrink-0 mt-0.5" />
                   <p className="text-[10px] leading-relaxed">
-                    The app requests direct browser camera permission and captures frames locally on your machine.
+                    Webcam mode uses browser camera permission. Network mode reads an MJPEG URL and may require CORS and HTTPS-compatible stream URLs.
                   </p>
                 </div>
                 <button onClick={refreshStream} className="w-full rounded-lg bg-cyan-100 hover:bg-cyan-200 text-cyan-800 text-[11px] font-bold px-3 py-2 transition-colors">
-                  Reconnect Local Camera
+                  Refresh Camera Source
                 </button>
               </div>
             </div>
@@ -640,26 +739,45 @@ const App: React.FC = () => {
               <div className="flex items-center justify-between px-1">
                 <span className="text-[10px] font-bold text-purple-700 uppercase tracking-[0.2em]">Live Stream</span>
                 <span className="flex items-center gap-1.5 text-[10px] font-bold text-white bg-gradient-to-r from-cyan-500 to-blue-500 px-2 py-0.5 rounded border border-cyan-300 shadow-sm">
-                  WEBCAM
+                  {cameraSourceMode === 'webcam' ? 'WEBCAM' : 'NETWORK'}
                 </span>
               </div>
               <div className="h-64 bg-white rounded-2xl border border-cyan-200 overflow-hidden shadow-lg hover:shadow-xl transition-shadow relative">
-                {streamConnected ? (
-                  <video
-                    ref={liveVideoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className={`w-full h-full object-contain bg-gradient-to-br from-blue-50 to-cyan-50 ${mirrorFlip ? 'scale-x-[-1]' : ''}`}
-                  />
+                {streamConnected && !mixedContentLikelyBlocked ? (
+                  cameraSourceMode === 'webcam' ? (
+                    <video
+                      ref={liveVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className={`w-full h-full object-contain bg-gradient-to-br from-blue-50 to-cyan-50 ${mirrorFlip ? 'scale-x-[-1]' : ''}`}
+                    />
+                  ) : (
+                    <img
+                      ref={networkImageRef}
+                      src={networkVideoUrl}
+                      alt="Network stream"
+                      onLoad={() => {
+                        setStreamConnected(true);
+                        setError(null);
+                      }}
+                      onError={() => {
+                        setStreamConnected(false);
+                        setError(`Failed to load stream from ${networkVideoUrl} — check: ESP32 is on, same Wi-Fi, and http://localhost (not HTTPS).`);
+                      }}
+                      className={`w-full h-full object-contain bg-gradient-to-br from-blue-50 to-cyan-50 ${mirrorFlip ? 'scale-x-[-1]' : ''}`}
+                    />
+                  )
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-cyan-50 gap-4">
                     <RefreshCcw className="w-8 h-8 text-cyan-500 animate-spin" />
-                    <p className="text-cyan-700 text-xs font-mono font-semibold">Opening local camera…</p>
+                    <p className="text-cyan-700 text-xs font-mono font-semibold">
+                      {mixedContentLikelyBlocked ? 'Blocked by HTTPS mixed content' : (cameraSourceMode === 'webcam' ? 'Opening local camera…' : 'Opening network stream…')}
+                    </p>
                   </div>
                 )}
                 <div className="absolute top-4 left-4 p-2 bg-white/90 backdrop-blur rounded-lg text-[10px] font-mono border border-cyan-300 uppercase tracking-widest text-cyan-700 font-bold shadow-sm">
-                  Local Cam
+                  {cameraSourceMode === 'webcam' ? 'Local Cam' : 'Network Cam'}
                 </div>
               </div>
 
@@ -802,13 +920,28 @@ const App: React.FC = () => {
                   <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-purple-50 to-pink-50 gap-4">
                     <Camera className="w-12 h-12 text-purple-300" />
                     <p className="text-purple-400 text-xs font-mono font-semibold">Click Capture to freeze frame</p>
-                    <button
-                      onClick={loadSample}
-                      disabled={status === AppStatus.CAPTURING}
-                      className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-50 rounded-full text-white text-xs font-bold shadow transition-all active:scale-95"
-                    >
-                      Load Sample
-                    </button>
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowSampleMenu(m => !m)}
+                        disabled={status === AppStatus.CAPTURING}
+                        className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-50 rounded-full text-white text-xs font-bold shadow transition-all active:scale-95"
+                      >
+                        Load Sample <ChevronDown className="w-3 h-3" />
+                      </button>
+                      {showSampleMenu && (
+                        <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-56 bg-white border border-amber-200 rounded-xl shadow-xl z-40 overflow-hidden">
+                          {SAMPLES.map(s => (
+                            <button
+                              key={s.file}
+                              onClick={() => loadSampleFile(s.file)}
+                              className="w-full text-left px-4 py-2 text-xs text-slate-700 hover:bg-amber-50 hover:text-amber-800 font-medium transition-colors"
+                            >
+                              {s.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

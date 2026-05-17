@@ -61,7 +61,8 @@ def camera_init():
     # WB_NONE (default) WB_SUNNY WB_CLOUDY WB_OFFICE WB_HOME
 def snapshot(req, resp):
     buf = camera.capture()
-    yield from picoweb.start_response(resp, content_type="image/jpeg")
+    yield from picoweb.start_response(resp, content_type="image/jpeg",
+        headers={"Access-Control-Allow-Origin": "*"})
     yield from resp.awrite(buf)
 # HTTP Response Content  
 index_web="""
@@ -93,7 +94,8 @@ def send_frame():
         
 # Video transmission
 def video(req, resp):
-    yield from picoweb.start_response(resp, content_type="multipart/x-mixed-replace; boundary=frame")
+    yield from picoweb.start_response(resp, content_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Access-Control-Allow-Origin": "*"})
     while True:
         yield from resp.awrite(next(send_frame()))
         gc.collect()
