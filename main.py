@@ -1,10 +1,12 @@
 import os
+import re
 import threading
 import time
 import base64
 from dataclasses import dataclass
 from typing import Optional, Union
 from urllib.error import URLError, HTTPError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 import cv2
@@ -288,6 +290,20 @@ def _preprocess_for_ocr(img_bgr, threshold: Optional[int], invert: bool):
     return bw
 
 
+def _normalize_camera_host(camera_ip: str) -> str:
+    candidate = camera_ip.strip()
+    if candidate.startswith("http://") or candidate.startswith("https://"):
+        parsed = urlparse(candidate)
+        candidate = parsed.netloc
+
+    candidate = candidate.strip().strip("/")
+    # Accept common host/IP formats with optional port; reject paths/query fragments.
+    if not re.fullmatch(r"[A-Za-z0-9.-]+(?::\d{1,5})?", candidate):
+        raise ValueError("camera_ip must be a host or IPv4/hostname with optional port")
+
+    return candidate
+
+
 APP_HOST = os.getenv("HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("PORT", "8000"))
 
@@ -365,6 +381,38 @@ def snapshots() -> Response:
         raise HTTPException(status_code=503, detail=err or "No frame available yet")
 
     return Response(content=jpeg, media_type="image/jpeg")
+
+
+@app.get("/proxy-snapshot")
+def proxy_snapshot(camera_ip: str) -> Response:
+    try:
+        camera_host = _normalize_camera_host(camera_ip)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    candidates = [f"http://{camera_host}/snapshot", f"http://{camera_host}/snapshots"]
+    last_error: Optional[str] = None
+
+    for base_url in candidates:
+        url = f"{base_url}?t={int(time.time() * 1000)}"
+        try:
+            req = Request(url, headers={"User-Agent": "camera-proxy/1.0", "Cache-Control": "no-cache"})
+            with urlopen(req, timeout=3) as resp:
+                content_type = resp.headers.get("Content-Type", "")
+                jpeg = resp.read()
+
+            if not jpeg:
+                raise RuntimeError("Empty snapshot response")
+            if "image" not in content_type and not jpeg.startswith(b"\xff\xd8"):
+                raise RuntimeError(f"Snapshot did not look like JPEG (Content-Type={content_type!r})")
+
+            return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+        except (HTTPError, URLError, TimeoutError, RuntimeError) as exc:
+            last_error = str(exc)
+        except Exception as exc:
+            last_error = str(exc)
+
+    raise HTTPException(status_code=502, detail=last_error or "Could not fetch camera snapshot")
 
 
 def _mjpeg_stream():

@@ -22,6 +22,7 @@ const App: React.FC = () => {
   const [cameraSourceMode, setCameraSourceMode] = useState<'webcam' | 'network'>('webcam');
   const [cameraIp, setCameraIp] = useState('192.168.86.60');
   const [cameraIpInput, setCameraIpInput] = useState('192.168.86.60');
+  const [simulationMode, setSimulationMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [cameraRefreshToken, setCameraRefreshToken] = useState(0);
 
@@ -52,6 +53,8 @@ const App: React.FC = () => {
   const networkVideoUrl = `http://${cameraIp}/video`;
   const pageIsHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
   const mixedContentLikelyBlocked = pageIsHttps && cameraSourceMode === 'network';
+
+  const normalizedBackendUrl = backendUrl.trim().replace(/\/+$/, '');
 
   const refreshStream = () => {
     setError(null);
@@ -258,11 +261,7 @@ const App: React.FC = () => {
     };
   }, [cameraRefreshToken, cameraSourceMode, mixedContentLikelyBlocked]);
 
-  const captureFromNetworkStream = async (): Promise<string> => {
-    const snapshotUrl = `http://${cameraIp}/snapshot`;
-    const resp = await fetch(snapshotUrl);
-    if (!resp.ok) throw new Error(`Snapshot request failed: ${resp.status} ${resp.statusText}`);
-    const blob = await resp.blob();
+  const blobToDataUrl = async (blob: Blob): Promise<string> => {
     return new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result as string);
@@ -271,11 +270,66 @@ const App: React.FC = () => {
     });
   };
 
+  const fetchImageAsDataUrl = async (url: string): Promise<string> => {
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      throw new Error(`Snapshot request failed: ${resp.status} ${resp.statusText}`);
+    }
+    const blob = await resp.blob();
+    return blobToDataUrl(blob);
+  };
+
+  const captureFromNetworkStream = async (): Promise<string> => {
+    const directSnapshotUrl = `http://${cameraIp}/snapshot`;
+    const proxySnapshotUrl = `${normalizedBackendUrl}/proxy-snapshot?camera_ip=${encodeURIComponent(cameraIp)}`;
+    const errors: string[] = [];
+
+    if (normalizedBackendUrl) {
+      try {
+        return await fetchImageAsDataUrl(proxySnapshotUrl);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        errors.push(`Proxy failed (${proxySnapshotUrl}): ${message}`);
+      }
+    }
+
+    try {
+      return await fetchImageAsDataUrl(directSnapshotUrl);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(`Direct failed (${directSnapshotUrl}): ${message}`);
+    }
+
+    throw new Error(
+      `${errors.join(' | ')}. ` +
+      `Direct camera fetch is often blocked by browser CORS. Start the backend (python main.py) and keep Backend Server URL set to ${normalizedBackendUrl || 'http://localhost:8000'}.`
+    );
+  };
+
+  const SAMPLES = [
+    { label: 'Original Artifact', file: '/sample-artifact.jpeg' },
+    { label: 'Unearthed (parchment)', file: '/unearthed.png' },
+    { label: 'Unearthed 2', file: '/unearthed2.png' },
+  ];
+
+  const applyCapturedFrame = (dataUrl: string) => {
+    setFrozenImageUrl(dataUrl);
+    setIsFrozen(true);
+    setFrozenThreshold(DEFAULT_CONFIG.DEFAULT_THRESHOLD);
+    setProcessedLiveImage(null);
+    setOcrText('');
+    setOcrError(null);
+    addToHistory(dataUrl);
+    setStatus(AppStatus.IDLE);
+  };
+
   const freezeStream = async () => {
     setStatus(AppStatus.CAPTURING);
     setError(null);
     try {
-      const dataUrl = cameraSourceMode === 'webcam'
+      const dataUrl = simulationMode
+        ? await fetchImageAsDataUrl(SAMPLES[Math.floor(Math.random() * SAMPLES.length)].file)
+        : cameraSourceMode === 'webcam'
         ? (() => {
             const video = liveVideoRef.current;
             if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
@@ -296,12 +350,7 @@ const App: React.FC = () => {
           })()
         : await captureFromNetworkStream();
 
-      setFrozenImageUrl(dataUrl);
-      setIsFrozen(true);
-      setFrozenThreshold(DEFAULT_CONFIG.DEFAULT_THRESHOLD);
-      setProcessedLiveImage(null);
-      addToHistory(dataUrl);
-      setStatus(AppStatus.IDLE);
+      applyCapturedFrame(dataUrl);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(`Failed to capture frame: ${message}`);
@@ -564,12 +613,6 @@ const App: React.FC = () => {
     setProcessedLiveImage(null);
   };
 
-  const SAMPLES = [
-    { label: 'Original Artifact',    file: '/sample-artifact.jpeg' },
-    { label: 'Unearthed (parchment)', file: '/unearthed.png' },
-    { label: 'Unearthed 2',          file: '/unearthed2.png' },
-  ];
-
   const [showSampleMenu, setShowSampleMenu] = useState(false);
 
   const loadSampleFile = async (path: string) => {
@@ -586,13 +629,7 @@ const App: React.FC = () => {
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-      setFrozenImageUrl(dataUrl);
-      setIsFrozen(true);
-      setFrozenThreshold(DEFAULT_CONFIG.DEFAULT_THRESHOLD);
-      setProcessedLiveImage(null);
-      setOcrText('');
-      setOcrError(null);
-      setStatus(AppStatus.IDLE);
+      applyCapturedFrame(dataUrl);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(`Failed to load sample image: ${message}`);
@@ -603,8 +640,8 @@ const App: React.FC = () => {
   return (
     <div className="flex h-screen overflow-hidden bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 text-slate-900">
       <main className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 border-b border-purple-200 bg-gradient-to-r from-white via-purple-50 to-pink-50/80 backdrop-blur flex items-center justify-between px-6 z-20">
-          <div className="flex items-center gap-4">
+        <header className="min-h-16 border-b border-purple-200 bg-gradient-to-r from-white via-purple-50 to-pink-50/80 backdrop-blur flex flex-wrap items-center justify-between gap-3 px-4 py-2 md:px-6 z-20">
+          <div className="flex items-center gap-3 md:gap-4 flex-wrap min-w-0">
             <div className="flex items-center gap-2">
               <Server className={`w-6 h-6 ${streamConnected ? 'text-cyan-600' : 'text-rose-600'}`} />
               <h1 className="font-bold text-2xl tracking-tight bg-gradient-to-r from-purple-600 via-pink-600 to-fuchsia-600 bg-clip-text text-transparent">Smart Portable Artifact Recovery<span> Kit </span></h1>
@@ -637,7 +674,14 @@ const App: React.FC = () => {
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 md:gap-3 flex-wrap justify-end">
+            <button
+              onClick={() => setSimulationMode((value) => !value)}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors border ${simulationMode ? 'bg-amber-500 border-amber-400 text-white' : 'bg-white border-purple-200 text-purple-700 hover:bg-purple-50'}`}
+              title="Simulation mode: capture random sample images"
+            >
+              {simulationMode ? 'Simulation On' : 'Simulation Off'}
+            </button>
             <button
               onClick={() => setMirrorFlip(f => !f)}
               className={`p-2 rounded-lg transition-colors ${mirrorFlip ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white' : 'hover:bg-purple-100 text-purple-700'}`}
@@ -761,7 +805,8 @@ const App: React.FC = () => {
           </div>
         )}
 
-        <div className="flex-1 overflow-auto p-6 space-y-6">
+        <div className="flex-1 overflow-auto p-4 md:p-6">
+          <div className="mx-auto w-full max-w-[1680px] space-y-6">
           {error && (
             <div className="bg-rose-100 border border-rose-400 p-4 rounded-xl flex items-start gap-3 text-rose-900 shadow-md">
               <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
@@ -769,7 +814,9 @@ const App: React.FC = () => {
             </div>
           )}
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6 items-start">
+            {/* LEFT COLUMN – both image panels */}
+            <div className="flex flex-col gap-4">
             {/* Live Stream Frame */}
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between px-1">
@@ -778,7 +825,7 @@ const App: React.FC = () => {
                   {cameraSourceMode === 'webcam' ? 'WEBCAM' : 'NETWORK'}
                 </span>
               </div>
-              <div className="h-64 bg-white rounded-2xl border border-cyan-200 overflow-hidden shadow-lg hover:shadow-xl transition-shadow relative">
+              <div className="h-64 md:h-72 xl:h-80 bg-white rounded-2xl border border-cyan-200 overflow-hidden shadow-lg hover:shadow-xl transition-shadow relative">
                 {streamConnected && !mixedContentLikelyBlocked ? (
                   cameraSourceMode === 'webcam' ? (
                     <video
@@ -817,11 +864,9 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-            </div>
-
-            {/* Captured Images History */}
-            {showHistory && (
-              <div className="flex flex-col gap-3 md:col-span-2">
+              {/* Captured Images History */}
+              {showHistory && (
+                <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between px-1">
                   <span className="text-[10px] font-bold text-purple-700 uppercase tracking-[0.2em]">Capture History</span>
                   <span className="text-[10px] font-mono bg-slate-100 px-2 py-1 rounded text-slate-700">
@@ -869,15 +914,17 @@ const App: React.FC = () => {
                     </div>
                   )}
                 </div>
-              </div>
-            )}
+                </div>
+              )}
+
+            </div>
 
             {/* Frozen Frame */}
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between px-1">
                 <span className="text-[10px] font-bold text-purple-700 uppercase tracking-[0.2em]">Captured Frame</span>
               </div>
-              <div className="h-64 bg-white rounded-2xl border border-purple-200 overflow-hidden shadow-lg hover:shadow-xl transition-shadow relative">
+              <div className="h-64 md:h-72 xl:h-80 bg-white rounded-2xl border border-purple-200 overflow-hidden shadow-lg hover:shadow-xl transition-shadow relative">
                 {isFrozen && frozenImageUrl ? (
                   <>
                     <div
@@ -981,7 +1028,11 @@ const App: React.FC = () => {
                   </div>
                 )}
               </div>
+            </div>{/* end Frozen Frame column */}
+            </div>{/* end LEFT column */}
 
+            {/* RIGHT COLUMN – all controls */}
+            <div className="flex flex-col gap-4">
               {/* Image Controls */}
               <div className="bg-white rounded-xl border border-cyan-200 p-4 shadow-md space-y-4">
                 <div className="space-y-3">
@@ -1125,7 +1176,7 @@ const App: React.FC = () => {
               </div>
 
               {/* OCR Model Guide */}
-              <div className="bg-white rounded-2xl border border-purple-200 shadow-lg overflow-y-auto p-5 space-y-4">
+              <div className="bg-white rounded-2xl border border-purple-200 shadow-lg p-5 space-y-4 overflow-y-auto max-h-[60vh]">
                 <h3 className="text-xs font-bold text-purple-700 uppercase tracking-[0.15em] flex items-center gap-2">
                   <Info className="w-4 h-4 text-purple-500" />
                   OCR Engine Guide
@@ -1330,7 +1381,8 @@ const App: React.FC = () => {
                   </div>
                 )}
               </div>
-            </div>
+            </div>{/* end RIGHT column */}
+          </div>
           </div>
         </div>
       </main>
